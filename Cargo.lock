@@ -30,14 +30,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "561d97a539a36e26a9a5fad1ea11a3039a67714694aaa379433e580854bc3dc5"
 
 [[package]]
-name = "ordinary-lmdb"
-version = "0.0.0"
+name = "liblmdb"
+version = "0.9.70"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fc3ce6e16e4f8d24892634ad66b6b0eb0dee063c5d42f8f40920c8225824984"
 dependencies = [
- "bitflags",
  "cc",
- "libc",
- "supercow",
- "tempdir",
 ]
 
 [[package]]
@@ -85,6 +83,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 dependencies = [
  "rand_core 0.3.1",
+]
+
+[[package]]
+name = "saferlmdb"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "libc",
+ "liblmdb",
+ "supercow",
+ "tempdir",
 ]
 
 [[package]]

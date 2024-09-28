@@ -8,50 +8,50 @@
 
 //! Internal helpers for working with `MDB_val`s.
 
+use libc::{self, c_void};
 use std::mem;
 use std::slice;
-use libc::{self, c_void};
 
-use crate::ffi;
+use liblmdb;
 
 use crate::error::{Error, Result};
 use crate::traits::*;
 
-pub const EMPTY_VAL: ffi::MDB_val = ffi::MDB_val {
+pub const EMPTY_VAL: liblmdb::MDB_val = liblmdb::MDB_val {
     mv_size: 0,
     mv_data: 0 as *mut c_void,
 };
 
-pub fn as_val<V : AsLmdbBytes + ?Sized>(v: &V) -> ffi::MDB_val {
+pub fn as_val<V: AsLmdbBytes + ?Sized>(v: &V) -> liblmdb::MDB_val {
     let bytes = v.as_lmdb_bytes();
-    ffi::MDB_val {
+    liblmdb::MDB_val {
         mv_size: bytes.len() as libc::size_t,
         mv_data: unsafe { mem::transmute(bytes.as_ptr()) },
     }
 }
 
-pub fn mdb_val_as_bytes<'a,O>(_o: &'a O, val: &ffi::MDB_val) -> &'a[u8] {
-    debug_assert!(!val.mv_data.is_null(), "MDB_val ptr is NULL, size = {}",
-                  val.mv_size);
+pub fn mdb_val_as_bytes<'a, O>(_o: &'a O, val: &liblmdb::MDB_val) -> &'a [u8] {
+    debug_assert!(
+        !val.mv_data.is_null(),
+        "MDB_val ptr is NULL, size = {}",
+        val.mv_size
+    );
 
-    unsafe {
-        slice::from_raw_parts(
-            mem::transmute(val.mv_data), val.mv_size as usize)
-    }
+    unsafe { slice::from_raw_parts(mem::transmute(val.mv_data), val.mv_size as usize) }
 }
 
-pub fn from_val<'a, O, V : FromLmdbBytes + ?Sized>(
-    _owner: &'a O, val: &ffi::MDB_val) -> Result<&'a V>
-{
+pub fn from_val<'a, O, V: FromLmdbBytes + ?Sized>(
+    _owner: &'a O,
+    val: &liblmdb::MDB_val,
+) -> Result<&'a V> {
     let bytes = mdb_val_as_bytes(_owner, val);
     V::from_lmdb_bytes(bytes).map_err(|s| Error::ValRejected(s))
 }
 
-pub unsafe fn from_reserved<'a, O, V : FromReservedLmdbBytes + ?Sized>(
-    _owner: &'a O, val: &ffi::MDB_val) -> &'a mut V
-{
-    let bytes = slice::from_raw_parts_mut(
-        mem::transmute(val.mv_data), val.mv_size as usize);
+pub unsafe fn from_reserved<'a, O, V: FromReservedLmdbBytes + ?Sized>(
+    _owner: &'a O,
+    val: &liblmdb::MDB_val,
+) -> &'a mut V {
+    let bytes = slice::from_raw_parts_mut(mem::transmute(val.mv_data), val.mv_size as usize);
     V::from_reserved_lmdb_bytes(bytes)
 }
-

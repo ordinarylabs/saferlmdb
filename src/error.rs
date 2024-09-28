@@ -14,53 +14,53 @@ use std::ffi::{CStr, NulError};
 use std::fmt;
 use std::result;
 
-use crate::ffi;
+use liblmdb;
 
 /// key/data pair already exists
-pub const KEYEXIST: c_int = ffi::MDB_KEYEXIST;
+pub const KEYEXIST: c_int = liblmdb::MDB_KEYEXIST;
 /// key/data pair not found (EOF)
-pub const NOTFOUND: c_int = ffi::MDB_NOTFOUND;
+pub const NOTFOUND: c_int = liblmdb::MDB_NOTFOUND;
 /// Requested page not found - this usually indicates corruption
-pub const PAGE_NOTFOUND: c_int = ffi::MDB_PAGE_NOTFOUND;
+pub const PAGE_NOTFOUND: c_int = liblmdb::MDB_PAGE_NOTFOUND;
 /// Located page was wrong type
-pub const CORRUPTED: c_int = ffi::MDB_CORRUPTED;
+pub const CORRUPTED: c_int = liblmdb::MDB_CORRUPTED;
 /// Update of meta page failed or environment had fatal error
-pub const PANIC: c_int = ffi::MDB_PANIC;
+pub const PANIC: c_int = liblmdb::MDB_PANIC;
 /// Environment version mismatch
-pub const VERSION_MISMATCH: c_int = ffi::MDB_VERSION_MISMATCH;
+pub const VERSION_MISMATCH: c_int = liblmdb::MDB_VERSION_MISMATCH;
 /// File is not a valid LMDB file
-pub const INVALID: c_int = ffi::MDB_INVALID;
+pub const INVALID: c_int = liblmdb::MDB_INVALID;
 /// Environment mapsize reached
-pub const MAP_FULL: c_int = ffi::MDB_MAP_FULL;
+pub const MAP_FULL: c_int = liblmdb::MDB_MAP_FULL;
 /// Environment maxdbs reached
-pub const DBS_FULL: c_int = ffi::MDB_DBS_FULL;
+pub const DBS_FULL: c_int = liblmdb::MDB_DBS_FULL;
 /// Environment maxreaders reached
-pub const READERS_FULL: c_int = ffi::MDB_READERS_FULL;
+pub const READERS_FULL: c_int = liblmdb::MDB_READERS_FULL;
 /// Too many TLS keys in use - Windows only
-pub const TLS_FULL: c_int = ffi::MDB_TLS_FULL;
+pub const TLS_FULL: c_int = liblmdb::MDB_TLS_FULL;
 /// Txn has too many dirty pages
-pub const TXN_FULL: c_int = ffi::MDB_TXN_FULL;
+pub const TXN_FULL: c_int = liblmdb::MDB_TXN_FULL;
 /// Cursor stack too deep - internal error
-pub const CURSOR_FULL: c_int = ffi::MDB_CURSOR_FULL;
+pub const CURSOR_FULL: c_int = liblmdb::MDB_CURSOR_FULL;
 /// Page has not enough space - internal error
-pub const PAGE_FULL: c_int = ffi::MDB_PAGE_FULL;
+pub const PAGE_FULL: c_int = liblmdb::MDB_PAGE_FULL;
 /// Database contents grew beyond environment mapsize
-pub const MAP_RESIZED: c_int = ffi::MDB_MAP_RESIZED;
+pub const MAP_RESIZED: c_int = liblmdb::MDB_MAP_RESIZED;
 /// Operation and DB incompatible, or DB type changed. This can mean:
 ///
 /// - The operation expects an `DUPSORT` / `DUPFIXED` database.
 /// - Opening a named DB when the unnamed DB has `DUPSORT` / `INTEGERKEY`.
 /// - Accessing a data record as a database, or vice versa.
 /// - The database was dropped and recreated with different flags.
-pub const INCOMPATIBLE: c_int = ffi::MDB_INCOMPATIBLE;
+pub const INCOMPATIBLE: c_int = liblmdb::MDB_INCOMPATIBLE;
 /// Invalid reuse of reader locktable slot
-pub const BAD_RSLOT: c_int = ffi::MDB_BAD_RSLOT;
+pub const BAD_RSLOT: c_int = liblmdb::MDB_BAD_RSLOT;
 /// Transaction must abort, has a child, or is invalid
-pub const BAD_TXN: c_int = ffi::MDB_BAD_TXN;
+pub const BAD_TXN: c_int = liblmdb::MDB_BAD_TXN;
 /// Unsupported size of key/DB name/data, or wrong `DUPFIXED` size
-pub const BAD_VALSIZE: c_int = ffi::MDB_BAD_VALSIZE;
+pub const BAD_VALSIZE: c_int = liblmdb::MDB_BAD_VALSIZE;
 /// The specified DBI was changed unexpectedly
-pub const BAD_DBI: c_int = ffi::MDB_BAD_DBI;
+pub const BAD_DBI: c_int = liblmdb::MDB_BAD_DBI;
 
 /// Error type returned by LMDB.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -99,7 +99,7 @@ impl Error {
             Error::ValRejected(..) => "Value conversion failed",
             Error::_NonExhaustive => "Error::_NonExhaustive",
             Error::Code(code) => unsafe {
-                let raw = ffi::mdb_strerror(code);
+                let raw = liblmdb::mdb_strerror(code);
                 if raw.is_null() {
                     "(null)"
                 } else {

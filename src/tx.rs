@@ -13,7 +13,7 @@ use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use crate::ffi;
+use liblmdb;
 
 use supercow::{NonSyncSupercow, Supercow};
 
@@ -26,7 +26,7 @@ use crate::traits::*;
 
 /// Flags used when calling the various `put` functions.
 pub mod put {
-    use crate::ffi;
+    use liblmdb;
 
     bitflags! {
         /// Flags used when calling the various `put` functions.
@@ -97,7 +97,7 @@ pub mod put {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const NODUPDATA = ffi::MDB_NODUPDATA;
+            const NODUPDATA = liblmdb::MDB_NODUPDATA;
             /// Enter the new key/data pair only if the key does not already
             /// appear in the database. The function will return `KEYEXIST` if
             /// the key already appears in the database, even if the database
@@ -160,7 +160,7 @@ pub mod put {
             /// ```
             // TODO: "The data parameter will be set to point to the existing
             // item." We should provide functionality to support that.
-            const NOOVERWRITE = ffi::MDB_NOOVERWRITE;
+            const NOOVERWRITE = liblmdb::MDB_NOOVERWRITE;
             /// Append the given key/data pair to the end of the database. This
             /// option allows fast bulk loading when keys are already known to
             /// be in the correct order. Loading unsorted keys with this flag
@@ -189,17 +189,17 @@ pub mod put {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const APPEND = ffi::MDB_APPEND;
+            const APPEND = liblmdb::MDB_APPEND;
             /// As with `APPEND` above, but for sorted dup data.
-            const APPENDDUP = ffi::MDB_APPENDDUP;
+            const APPENDDUP = liblmdb::MDB_APPENDDUP;
         }
     }
 }
 
 /// Flags used when deleting items.
 pub mod del {
-    use crate::ffi;
     use libc;
+    use liblmdb;
 
     bitflags! {
         /// Flags used when deleting items via cursors.
@@ -239,20 +239,20 @@ pub mod del {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const NODUPDATA = ffi::MDB_NODUPDATA;
+            const NODUPDATA = liblmdb::MDB_NODUPDATA;
         }
     }
 }
 
 // This is internal, but used by other parts of the library
 #[derive(Debug)]
-pub struct TxHandle(pub *mut ffi::MDB_txn);
+pub struct TxHandle(pub *mut liblmdb::MDB_txn);
 
 impl Drop for TxHandle {
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe {
-                ffi::mdb_txn_abort(self.0);
+                liblmdb::mdb_txn_abort(self.0);
             }
             self.0 = ptr::null_mut();
         }
@@ -262,7 +262,7 @@ impl Drop for TxHandle {
 impl TxHandle {
     pub unsafe fn commit(&mut self) -> Result<()> {
         let txn_p = mem::replace(&mut self.0, ptr::null_mut());
-        lmdb_call!(ffi::mdb_txn_commit(txn_p));
+        lmdb_call!(liblmdb::mdb_txn_commit(txn_p));
         Ok(())
     }
 }
@@ -513,9 +513,9 @@ impl<'env> ConstTransaction<'env> {
     {
         let env: NonSyncSupercow<'env, Environment> = env.into();
 
-        let mut rawtx: *mut ffi::MDB_txn = ptr::null_mut();
+        let mut rawtx: *mut liblmdb::MDB_txn = ptr::null_mut();
         unsafe {
-            lmdb_call!(ffi::mdb_txn_begin(
+            lmdb_call!(liblmdb::mdb_txn_begin(
                 env::env_ptr_no_sync(&env),
                 parent.map_or(ptr::null_mut(), |p| p.tx.0),
                 flags,
@@ -592,7 +592,7 @@ impl<'env> ConstTransaction<'env> {
 
     /// Returns the internal id of this transaction.
     pub fn id(&self) -> usize {
-        unsafe { ffi::mdb_txn_id(self.tx.0) }
+        unsafe { liblmdb::mdb_txn_id(self.tx.0) }
     }
 
     /// Retrieves statistics for a database.
@@ -600,8 +600,8 @@ impl<'env> ConstTransaction<'env> {
         db.assert_same_env(&self.env)?;
 
         unsafe {
-            let mut raw: ffi::MDB_stat = mem::zeroed();
-            lmdb_call!(ffi::mdb_stat(self.tx.0, db.as_raw(), &mut raw));
+            let mut raw: liblmdb::MDB_stat = mem::zeroed();
+            lmdb_call!(liblmdb::mdb_stat(self.tx.0, db.as_raw(), &mut raw));
             Ok(raw.into())
         }
     }
@@ -612,7 +612,7 @@ impl<'env> ConstTransaction<'env> {
 
         let mut raw: c_uint = 0;
         unsafe {
-            lmdb_call!(ffi::mdb_dbi_flags(self.tx.0, db.as_raw(), &mut raw));
+            lmdb_call!(liblmdb::mdb_dbi_flags(self.tx.0, db.as_raw(), &mut raw));
         }
         Ok(db::Flags::from_bits_truncate(raw))
     }
@@ -645,7 +645,7 @@ pub fn assert_in_env(txn: &ConstTransaction, env: &Environment) -> Result<()> {
     }
 }
 #[inline]
-pub fn txptr(txn: &ConstTransaction) -> *mut ffi::MDB_txn {
+pub fn txptr(txn: &ConstTransaction) -> *mut liblmdb::MDB_txn {
     txn.tx.0
 }
 
@@ -680,7 +680,7 @@ impl<'env> ReadTransaction<'env> {
         Ok(ReadTransaction(ConstTransaction::new(
             env,
             None,
-            ffi::MDB_RDONLY,
+            liblmdb::MDB_RDONLY,
         )?))
     }
 
@@ -836,7 +836,7 @@ impl<'env> ReadTransaction<'env> {
     /// ```
     pub fn reset(self) -> ResetTransaction<'env> {
         unsafe {
-            ffi::mdb_txn_reset(self.0.tx.0);
+            liblmdb::mdb_txn_reset(self.0.tx.0);
         }
         ResetTransaction(self)
     }
@@ -847,7 +847,7 @@ impl<'env> ResetTransaction<'env> {
     /// reading.
     pub fn renew(self) -> Result<ReadTransaction<'env>> {
         unsafe {
-            lmdb_call!(ffi::mdb_txn_renew((self.0).0.tx.0));
+            lmdb_call!(liblmdb::mdb_txn_renew((self.0).0.tx.0));
         }
         Ok(self.0)
     }
@@ -1018,7 +1018,7 @@ impl<'txn> ConstAccessor<'txn> {
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
         unsafe {
-            lmdb_call!(ffi::mdb_get(
+            lmdb_call!(liblmdb::mdb_get(
                 self.txptr(),
                 db.as_raw(),
                 &mut mv_key,
@@ -1029,7 +1029,7 @@ impl<'txn> ConstAccessor<'txn> {
         from_val(self, &out_val)
     }
 
-    fn txptr(&self) -> *mut ffi::MDB_txn {
+    fn txptr(&self) -> *mut liblmdb::MDB_txn {
         self.0.tx.0
     }
 
@@ -1066,7 +1066,7 @@ impl<'txn> WriteAccessor<'txn> {
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(value);
         unsafe {
-            lmdb_call!(ffi::mdb_put(
+            lmdb_call!(liblmdb::mdb_put(
                 self.txptr(),
                 db.as_raw(),
                 &mut mv_key,
@@ -1215,12 +1215,12 @@ impl<'txn> WriteAccessor<'txn> {
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
         out_val.mv_size = size;
-        lmdb_call!(ffi::mdb_put(
+        lmdb_call!(liblmdb::mdb_put(
             self.txptr(),
             db.as_raw(),
             &mut mv_key,
             &mut out_val,
-            flags.bits() | ffi::MDB_RESERVE
+            flags.bits() | liblmdb::MDB_RESERVE
         ));
 
         Ok(from_reserved(self, &out_val))
@@ -1261,7 +1261,7 @@ impl<'txn> WriteAccessor<'txn> {
 
         let mut mv_key = as_val(key);
         unsafe {
-            lmdb_call!(ffi::mdb_del(
+            lmdb_call!(liblmdb::mdb_del(
                 self.txptr(),
                 db.as_raw(),
                 &mut mv_key,
@@ -1315,7 +1315,7 @@ impl<'txn> WriteAccessor<'txn> {
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(val);
         unsafe {
-            lmdb_call!(ffi::mdb_del(
+            lmdb_call!(liblmdb::mdb_del(
                 self.txptr(),
                 db.as_raw(),
                 &mut mv_key,
@@ -1355,7 +1355,7 @@ impl<'txn> WriteAccessor<'txn> {
     pub fn clear_db(&mut self, db: &Database) -> Result<()> {
         db.assert_same_env(self.env())?;
         unsafe {
-            lmdb_call!(ffi::mdb_drop(self.txptr(), db.as_raw(), 0));
+            lmdb_call!(liblmdb::mdb_drop(self.txptr(), db.as_raw(), 0));
         }
         Ok(())
     }

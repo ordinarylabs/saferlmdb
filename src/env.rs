@@ -15,14 +15,14 @@ use std::ptr;
 use std::sync::Mutex;
 use supercow::{NonSyncSupercow, Supercow};
 
-use crate::ffi;
+use liblmdb;
 
 use crate::tx::TxHandle;
 use crate::{Fd, FileMode, Result};
 
 /// Flags used when opening an LMDB environment.
 pub mod open {
-    use crate::ffi;
+    use liblmdb;
 
     bitflags! {
         /// Flags used when opening an LMDB environment.
@@ -36,17 +36,17 @@ pub mod open {
             /// depending on how the operating system has allocated memory to
             /// shared libraries and other uses. The feature is highly
             /// experimental.
-            const FIXEDMAP = ffi::MDB_FIXEDMAP;
+            const FIXEDMAP = liblmdb::MDB_FIXEDMAP;
             /// By default, LMDB creates its environment in a directory whose
             /// pathname is given in path, and creates its data and lock files
             /// under that directory. With this option, the `path` passed to
             /// `EnvBuilder::open` is used as-is for the database main data
             /// file. The database lock file is the path with "-lock" appended.
-            const NOSUBDIR = ffi::MDB_NOSUBDIR;
+            const NOSUBDIR = liblmdb::MDB_NOSUBDIR;
             /// Open the environment in read-only mode. No write operations
             /// will be allowed. LMDB will still modify the lock file - except
             /// on read-only filesystems, where LMDB does not use locks.
-            const RDONLY = ffi::MDB_RDONLY;
+            const RDONLY = liblmdb::MDB_RDONLY;
             /// Use a writeable memory map unless `RDONLY` is set. This is
             /// faster and uses fewer mallocs, but loses protection from
             /// application bugs like wild pointer writes and other bad updates
@@ -54,7 +54,7 @@ pub mod open {
             /// not mix processes with and without `WRITEMAP` on the same
             /// environment. This can defeat durability (`Environment::sync`
             /// etc).
-            const WRITEMAP = ffi::MDB_WRITEMAP;
+            const WRITEMAP = liblmdb::MDB_WRITEMAP;
             /// Flush system buffers to disk only once per transaction, omit
             /// the metadata flush. Defer that until the system flushes files
             /// to disk, or next non-`RDONLY` commit or `Environment::sync()`.
@@ -63,7 +63,7 @@ pub mod open {
             /// preserves the ACI (atomicity, consistency, isolation) but not D
             /// (durability) database property. This flag may be changed at any
             /// time using `Environment::set_flags()`.
-            const NOMETASYNC = ffi::MDB_NOMETASYNC;
+            const NOMETASYNC = liblmdb::MDB_NOMETASYNC;
             /// Don't flush system buffers to disk when committing a
             /// transaction. This optimization means a system crash can corrupt
             /// the database or lose the last transactions if buffers are not
@@ -79,13 +79,13 @@ pub mod open {
             /// `Environment::sync()` is called. `(MAPASYNC | WRITEMAP)` may be
             /// preferable. This flag may be changed at any time using
             /// `Environment::set_flags()`.
-            const NOSYNC = ffi::MDB_NOSYNC;
+            const NOSYNC = liblmdb::MDB_NOSYNC;
             /// When using `WRITEMAP`, use asynchronous flushes to disk. As
             /// with `NOSYNC`, a system crash can then corrupt the database or
             /// lose the last transactions. Calling `Environment::sync()`
             /// ensures on-disk database integrity until next commit. This flag
             /// may be changed at any time using `Environment::set_flags()`.
-            const MAPASYNC = ffi::MDB_MAPASYNC;
+            const MAPASYNC = liblmdb::MDB_MAPASYNC;
             /// Don't use Thread-Local Storage. Tie reader locktable slots to
             /// transaction objects instead of to threads. I.e.
             /// `Transaction::reset()` keeps the slot reseved for the
@@ -96,7 +96,7 @@ pub mod open {
             /// an application must also serialize the write transactions in an
             /// OS thread, since LMDB's write locking is unaware of the user
             /// threads.
-            const NOTLS = ffi::MDB_NOTLS;
+            const NOTLS = liblmdb::MDB_NOTLS;
             /// Don't do any locking. If concurrent access is anticipated, the
             /// caller must manage all concurrency itself. For proper operation
             /// the caller must enforce single-writer semantics, and must
@@ -104,13 +104,13 @@ pub mod open {
             /// writer is active. The simplest approach is to use an exclusive
             /// lock so that no readers may be active at all when a writer
             /// begins.
-            const NOLOCK = ffi::MDB_NOLOCK;
+            const NOLOCK = liblmdb::MDB_NOLOCK;
             /// Turn off readahead. Most operating systems perform readahead on
             /// read requests by default. This option turns it off if the OS
             /// supports it. Turning it off may help random read performance
             /// when the DB is larger than RAM and system RAM is full. The
             /// option is not implemented on Windows.
-            const NORDAHEAD = ffi::MDB_NORDAHEAD;
+            const NORDAHEAD = liblmdb::MDB_NORDAHEAD;
             /// Don't initialize malloc'd memory before writing to unused
             /// spaces in the data file. By default, memory for pages written
             /// to the data file is obtained using malloc. While these pages
@@ -130,7 +130,7 @@ pub mod open {
             /// `RESERVE` is used; the caller is expected to overwrite all of
             /// the memory that was reserved in that case. This flag may be
             /// changed at any time using `Environment::set_flags()`.
-            const NOMEMINIT = ffi::MDB_NOMEMINIT;
+            const NOMEMINIT = liblmdb::MDB_NOMEMINIT;
         }
     }
 }
@@ -146,20 +146,20 @@ pub mod copy {
             /// Perform compaction while copying: omit free pages and sequentially
             /// renumber all pages in output. This option consumes more CPU and
             /// runs more slowly than the default.
-            const COMPACT = crate::ffi::MDB_CP_COMPACT;
+            const COMPACT = liblmdb::MDB_CP_COMPACT;
         }
     }
 }
 
 #[derive(Debug)]
-struct EnvHandle(*mut ffi::MDB_env, bool);
+struct EnvHandle(*mut liblmdb::MDB_env, bool);
 
 unsafe impl Sync for EnvHandle {}
 unsafe impl Send for EnvHandle {}
 impl Drop for EnvHandle {
     fn drop(&mut self) {
         if self.1 {
-            unsafe { ffi::mdb_env_close(self.0) }
+            unsafe { liblmdb::mdb_env_close(self.0) }
         }
     }
 }
@@ -174,9 +174,9 @@ pub struct EnvBuilder {
 impl EnvBuilder {
     /// Allocates a new, uninitialised environment.
     pub fn new() -> Result<Self> {
-        let mut env: *mut ffi::MDB_env = ptr::null_mut();
+        let mut env: *mut liblmdb::MDB_env = ptr::null_mut();
         unsafe {
-            lmdb_call!(ffi::mdb_env_create(&mut env));
+            lmdb_call!(liblmdb::mdb_env_create(&mut env));
             Ok(EnvBuilder {
                 env: EnvHandle(env, true),
             })
@@ -198,7 +198,10 @@ impl EnvBuilder {
     /// See also `Environment::set_mapsize()`.
     pub fn set_mapsize(&mut self, size: usize) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_set_mapsize(self.env.0, size as libc::size_t));
+            lmdb_call!(liblmdb::mdb_env_set_mapsize(
+                self.env.0,
+                size as libc::size_t
+            ));
         }
 
         Ok(())
@@ -214,7 +217,7 @@ impl EnvBuilder {
     /// object until it or the `Environment` object is destroyed.
     pub fn set_maxreaders(&mut self, readers: u32) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_set_maxreaders(
+            lmdb_call!(liblmdb::mdb_env_set_maxreaders(
                 self.env.0,
                 readers as libc::c_uint
             ));
@@ -234,7 +237,7 @@ impl EnvBuilder {
     /// linear search of the opened slots.
     pub fn set_maxdbs(&mut self, dbs: u32) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_set_maxdbs(self.env.0, dbs as libc::c_uint));
+            lmdb_call!(liblmdb::mdb_env_set_maxdbs(self.env.0, dbs as libc::c_uint));
         }
 
         Ok(())
@@ -273,7 +276,7 @@ impl EnvBuilder {
         mode: FileMode,
     ) -> Result<Environment> {
         let path_cstr = CString::new(path)?;
-        lmdb_call!(ffi::mdb_env_open(
+        lmdb_call!(liblmdb::mdb_env_open(
             self.env.0,
             path_cstr.as_ptr(),
             flags.bits(),
@@ -292,7 +295,7 @@ pub struct Environment {
     env: EnvHandle,
     // Track what DBIs are currently in use, so that an open() call that tries
     // to duplicate one fails.
-    open_dbis: Mutex<HashSet<ffi::MDB_dbi>>,
+    open_dbis: Mutex<HashSet<liblmdb::MDB_dbi>>,
 }
 
 /// Statistics information about an environment.
@@ -312,8 +315,8 @@ pub struct Stat {
     pub entries: usize,
 }
 
-impl From<ffi::MDB_stat> for Stat {
-    fn from(raw: ffi::MDB_stat) -> Stat {
+impl From<liblmdb::MDB_stat> for Stat {
+    fn from(raw: liblmdb::MDB_stat) -> Stat {
         Stat {
             psize: raw.ms_psize as u32,
             depth: raw.ms_depth as u32,
@@ -361,7 +364,7 @@ impl Environment {
     /// coexist (though the others would need to be created by `borrow_raw`).
     /// However, care must be taken when using databases since by default the
     /// `Environment` will assume ownership of those as well.
-    pub unsafe fn from_raw(env: *mut ffi::MDB_env) -> Self {
+    pub unsafe fn from_raw(env: *mut liblmdb::MDB_env) -> Self {
         Environment {
             env: EnvHandle(env, true),
             open_dbis: Mutex::new(HashSet::new()),
@@ -386,7 +389,7 @@ impl Environment {
     /// coexist (though the others would need to be created by `borrow_raw`).
     /// However, care must be taken when using databases since by default the
     /// `Environment` will assume ownership of those as well.
-    pub unsafe fn borrow_raw(env: *mut ffi::MDB_env) -> Self {
+    pub unsafe fn borrow_raw(env: *mut liblmdb::MDB_env) -> Self {
         Environment {
             env: EnvHandle(env, false),
             open_dbis: Mutex::new(HashSet::new()),
@@ -402,7 +405,7 @@ impl Environment {
     /// rules, and must not take any action that would cause the `MDB_env` to
     /// be destroyed prematurely, or to use it after this `Environment` is
     /// destroyed.
-    pub fn as_raw(&self) -> *mut ffi::MDB_env {
+    pub fn as_raw(&self) -> *mut liblmdb::MDB_env {
         self.env.0
     }
 
@@ -418,7 +421,7 @@ impl Environment {
     /// While this call is in and of itself safe, the caller must ensure that
     /// operations against the backing store do not violate Rust aliasing
     /// rules.
-    pub fn into_raw(self) -> *mut ffi::MDB_env {
+    pub fn into_raw(self) -> *mut liblmdb::MDB_env {
         let ret = self.env.0;
         mem::forget(self.env);
         ret
@@ -452,7 +455,7 @@ impl Environment {
     pub fn copy(&self, path: &str, flags: copy::Flags) -> Result<()> {
         let path_cstr = CString::new(path)?;
         unsafe {
-            lmdb_call!(ffi::mdb_env_copy2(
+            lmdb_call!(liblmdb::mdb_env_copy2(
                 self.env.0,
                 path_cstr.as_ptr(),
                 flags.bits()
@@ -474,7 +477,7 @@ impl Environment {
     /// See long-lived transactions under Caveats.
     pub fn copyfd(&self, fd: Fd, flags: copy::Flags) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_copyfd2(self.env.0, fd, flags.bits()));
+            lmdb_call!(liblmdb::mdb_env_copyfd2(self.env.0, fd, flags.bits()));
         }
         Ok(())
     }
@@ -482,8 +485,8 @@ impl Environment {
     /// Return statistics about the LMDB environment.
     pub fn stat(&self) -> Result<Stat> {
         let raw = unsafe {
-            let mut raw = mem::zeroed::<ffi::MDB_stat>();
-            lmdb_call!(ffi::mdb_env_stat(self.env.0, &mut raw));
+            let mut raw = mem::zeroed::<liblmdb::MDB_stat>();
+            lmdb_call!(liblmdb::mdb_env_stat(self.env.0, &mut raw));
             raw
         };
         Ok(raw.into())
@@ -492,8 +495,8 @@ impl Environment {
     /// Return information about the LMDB environment.
     pub fn info(&self) -> Result<EnvInfo> {
         let raw = unsafe {
-            let mut raw = mem::zeroed::<ffi::MDB_envinfo>();
-            lmdb_call!(ffi::mdb_env_info(self.env.0, &mut raw));
+            let mut raw = mem::zeroed::<liblmdb::MDB_envinfo>();
+            lmdb_call!(liblmdb::mdb_env_info(self.env.0, &mut raw));
             raw
         };
         Ok(EnvInfo {
@@ -519,7 +522,7 @@ impl Environment {
     /// with `MAPASYNC` they will be asynchronous.
     pub fn sync(&self, force: bool) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_sync(self.env.0, force as c_int));
+            lmdb_call!(liblmdb::mdb_env_sync(self.env.0, force as c_int));
         }
         Ok(())
     }
@@ -560,7 +563,7 @@ impl Environment {
     /// # }
     /// ```
     pub unsafe fn set_flags(&self, flags: open::Flags, onoff: bool) -> Result<()> {
-        lmdb_call!(ffi::mdb_env_set_flags(
+        lmdb_call!(liblmdb::mdb_env_set_flags(
             self.env.0,
             flags.bits(),
             onoff as c_int
@@ -572,7 +575,7 @@ impl Environment {
     pub fn flags(&self) -> Result<open::Flags> {
         let mut raw: c_uint = 0;
         unsafe {
-            lmdb_call!(ffi::mdb_env_get_flags(self.env.0, &mut raw));
+            lmdb_call!(liblmdb::mdb_env_get_flags(self.env.0, &mut raw));
         }
         Ok(open::Flags::from_bits_truncate(raw))
     }
@@ -585,7 +588,7 @@ impl Environment {
     pub fn path(&self) -> Result<&CStr> {
         let raw: *mut *const c_char = ptr::null_mut();
         unsafe {
-            lmdb_call!(ffi::mdb_env_get_path(self.env.0, raw));
+            lmdb_call!(liblmdb::mdb_env_get_path(self.env.0, raw));
             if raw.is_null() {
                 panic!("mdb_env_get_path() returned NULL pointer");
             }
@@ -603,7 +606,7 @@ impl Environment {
     /// normal LMDB functionality, such as by writing to it or closing it.
     pub unsafe fn fd(&self) -> Result<Fd> {
         let mut raw: Fd = 0;
-        lmdb_call!(ffi::mdb_env_get_fd(self.env.0, &mut raw));
+        lmdb_call!(liblmdb::mdb_env_get_fd(self.env.0, &mut raw));
         Ok(raw)
     }
 
@@ -630,7 +633,7 @@ impl Environment {
     /// process. Note that the library does not check for this condition, the
     /// caller must ensure it explicitly.
     pub unsafe fn set_mapsize(&self, size: usize) -> Result<()> {
-        lmdb_call!(ffi::mdb_env_set_mapsize(self.env.0, size));
+        lmdb_call!(liblmdb::mdb_env_set_mapsize(self.env.0, size));
         Ok(())
     }
 
@@ -638,7 +641,7 @@ impl Environment {
     pub fn maxreaders(&self) -> Result<u32> {
         let mut raw: c_uint = 0;
         unsafe {
-            lmdb_call!(ffi::mdb_env_get_maxreaders(self.env.0, &mut raw));
+            lmdb_call!(liblmdb::mdb_env_get_maxreaders(self.env.0, &mut raw));
         }
         Ok(raw as u32)
     }
@@ -648,7 +651,7 @@ impl Environment {
     /// Depends on the compile-time constant `MDB_MAXKEYSIZE` in LMDB.
     /// Default 511.
     pub fn maxkeysize(&self) -> u32 {
-        unsafe { ffi::mdb_env_get_maxkeysize(self.env.0) as u32 }
+        unsafe { liblmdb::mdb_env_get_maxkeysize(self.env.0) as u32 }
     }
 
     /// Check for stale entries in the reader lock table.
@@ -657,39 +660,39 @@ impl Environment {
     pub fn reader_check(&self) -> Result<i32> {
         let mut raw: c_int = 0;
         unsafe {
-            lmdb_call!(ffi::mdb_reader_check(self.env.0, &mut raw));
+            lmdb_call!(liblmdb::mdb_reader_check(self.env.0, &mut raw));
         }
         Ok(raw as i32)
     }
 }
 
 // Internal API
-pub fn dbi_close(this: &Environment, dbi: ffi::MDB_dbi) {
+pub fn dbi_close(this: &Environment, dbi: liblmdb::MDB_dbi) {
     // Hold the lock through the end of the function to also guard the
     // LMDB's unsynchronised DBI table.
     let mut locked_dbis = this.open_dbis.lock().expect("open_dbis lock poisoned");
     assert!(locked_dbis.remove(&dbi), "closed dbi that wasn't open");
 
     unsafe {
-        ffi::mdb_dbi_close(this.env.0, dbi);
+        liblmdb::mdb_dbi_close(this.env.0, dbi);
     }
 }
 
 // Internal API
-pub fn dbi_delete(this: &Environment, dbi: ffi::MDB_dbi) -> Result<()> {
+pub fn dbi_delete(this: &Environment, dbi: liblmdb::MDB_dbi) -> Result<()> {
     // Hold the lock across the call to `mdb_drop()` to also guard its
     // unsynchronised DBI table.
     let mut locked_dbis = this.open_dbis.lock().expect("open_dbis lock poisoned");
     unsafe {
-        let mut raw_txn: *mut ffi::MDB_txn = ptr::null_mut();
-        lmdb_call!(ffi::mdb_txn_begin(
+        let mut raw_txn: *mut liblmdb::MDB_txn = ptr::null_mut();
+        lmdb_call!(liblmdb::mdb_txn_begin(
             this.env.0,
             ptr::null_mut(),
             0,
             &mut raw_txn
         ));
         let mut txn = TxHandle(raw_txn);
-        lmdb_call!(ffi::mdb_drop(raw_txn, dbi, 1 /* delete */));
+        lmdb_call!(liblmdb::mdb_drop(raw_txn, dbi, 1 /* delete */));
         txn.commit()?;
     }
     assert!(locked_dbis.remove(&dbi), "closed dbi that wasn't open");
@@ -697,16 +700,16 @@ pub fn dbi_delete(this: &Environment, dbi: ffi::MDB_dbi) -> Result<()> {
 }
 
 // Internal API
-pub fn env_ptr<'a>(this: &'a Supercow<'a, Environment>) -> *mut ffi::MDB_env {
+pub fn env_ptr<'a>(this: &'a Supercow<'a, Environment>) -> *mut liblmdb::MDB_env {
     this.env.0
 }
 
-pub fn env_ptr_no_sync<'a>(this: &'a NonSyncSupercow<'a, Environment>) -> *mut ffi::MDB_env {
+pub fn env_ptr_no_sync<'a>(this: &'a NonSyncSupercow<'a, Environment>) -> *mut liblmdb::MDB_env {
     this.env.0
 }
 
 // Internal API
-pub fn env_open_dbis<'a>(this: &'a Supercow<'a, Environment>) -> &Mutex<HashSet<ffi::MDB_dbi>> {
+pub fn env_open_dbis<'a>(this: &'a Supercow<'a, Environment>) -> &Mutex<HashSet<liblmdb::MDB_dbi>> {
     &this.open_dbis
 }
 

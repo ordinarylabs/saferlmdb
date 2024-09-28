@@ -1,5 +1,5 @@
 [package]
-name = "ordinary-lmdb"
+name = "saferlmdb"
 edition = "2021"
 version = "0.0.0"
 authors = ["FullContact, Inc", "Jason Lingle", "sean watters <sean@ordinarylabs.io>"]
@@ -17,10 +17,8 @@ wrapper around LMDB.
 [dependencies]
 bitflags = "2"
 libc = "0.2"
+liblmdb = "0.9.70"
 supercow = "0.1.0"
 
 [dev-dependencies]
-tempdir = "=0.3.4"
-
-[build-dependencies]
-cc = "1"
+tempdir = "0.3"

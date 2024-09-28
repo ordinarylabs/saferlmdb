@@ -13,7 +13,7 @@ use std::ffi::CString;
 use std::mem;
 use std::ptr;
 
-use crate::ffi;
+use liblmdb;
 use supercow::Supercow;
 
 use crate::env::{self, Environment};
@@ -24,7 +24,7 @@ use crate::tx::TxHandle;
 
 /// Flags used when opening databases.
 pub mod db {
-    use crate::ffi;
+    use liblmdb;
 
     bitflags! {
         /// Flags used when opening databases.
@@ -63,7 +63,7 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const REVERSEKEY = ffi::MDB_REVERSEKEY;
+            const REVERSEKEY = liblmdb::MDB_REVERSEKEY;
             /// Duplicate keys may be used in the database. (Or, from another
             /// perspective, keys may have multiple data items, stored in
             /// sorted order.) By default keys must be unique and may have only
@@ -94,7 +94,7 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const DUPSORT = ffi::MDB_DUPSORT;
+            const DUPSORT = liblmdb::MDB_DUPSORT;
             /// Keys are binary integers in native byte order, either
             /// `libc::c_uint` or `libc::size_t`, and will be sorted as such.
             /// The keys must all be of the same size.
@@ -132,7 +132,7 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const INTEGERKEY = ffi::MDB_INTEGERKEY;
+            const INTEGERKEY = liblmdb::MDB_INTEGERKEY;
             /// This flag may only be used in combination with `DUPSORT`. This
             /// option tells the library that the data items for this database
             /// are all the same size, which allows further optimizations in
@@ -207,10 +207,10 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const DUPFIXED = ffi::MDB_DUPFIXED;
+            const DUPFIXED = liblmdb::MDB_DUPFIXED;
             /// This option specifies that duplicate data items are binary
             /// integers, similar to `INTEGERKEY` keys.
-            const INTEGERDUP = ffi::MDB_INTEGERDUP;
+            const INTEGERDUP = liblmdb::MDB_INTEGERDUP;
             /// This option specifies that duplicate data items should be
             /// compared as strings in reverse order.
             ///
@@ -244,10 +244,10 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const REVERSEDUP = ffi::MDB_REVERSEDUP;
+            const REVERSEDUP = liblmdb::MDB_REVERSEDUP;
             /// Create the named database if it doesn't exist. This option is
             /// not allowed in a read-only environment.
-            const CREATE = ffi::MDB_CREATE;
+            const CREATE = liblmdb::MDB_CREATE;
         }
     }
 }
@@ -255,7 +255,7 @@ pub mod db {
 #[derive(Debug)]
 struct DbHandle<'a> {
     env: Supercow<'a, Environment>,
-    dbi: ffi::MDB_dbi,
+    dbi: liblmdb::MDB_dbi,
     close_on_drop: bool,
 }
 
@@ -398,8 +398,8 @@ pub struct Database<'a> {
 pub struct DatabaseOptions {
     /// The integer flags to pass to LMDB
     pub flags: db::Flags,
-    key_cmp: Option<ffi::MDB_cmp_func>,
-    val_cmp: Option<ffi::MDB_cmp_func>,
+    key_cmp: Option<liblmdb::MDB_cmp_func>,
+    val_cmp: Option<liblmdb::MDB_cmp_func>,
 }
 
 impl DatabaseOptions {
@@ -553,8 +553,8 @@ impl DatabaseOptions {
     }
 
     extern "C" fn entry_cmp_as<V: LmdbOrdKey + ?Sized>(
-        ap: *const ffi::MDB_val,
-        bp: *const ffi::MDB_val,
+        ap: *const liblmdb::MDB_val,
+        bp: *const liblmdb::MDB_val,
     ) -> c_int {
         match unsafe {
             V::from_lmdb_bytes(mdb_val_as_bytes(&ap, &*ap))
@@ -690,7 +690,7 @@ impl<'a> Database<'a> {
     {
         let env: Supercow<'a, Environment> = env.into();
 
-        let mut raw: ffi::MDB_dbi = 0;
+        let mut raw: liblmdb::MDB_dbi = 0;
         let name_cstr = match name {
             None => None,
             Some(s) => Some(CString::new(s)?),
@@ -703,19 +703,19 @@ impl<'a> Database<'a> {
                 .lock()
                 .expect("open_dbis lock poisoned");
 
-            let mut raw_tx: *mut ffi::MDB_txn = ptr::null_mut();
+            let mut raw_tx: *mut liblmdb::MDB_txn = ptr::null_mut();
             let mut txn_flags = 0;
             if env.flags().unwrap().contains(env::open::Flags::RDONLY) {
-                txn_flags = ffi::MDB_RDONLY;
+                txn_flags = liblmdb::MDB_RDONLY;
             }
-            lmdb_call!(ffi::mdb_txn_begin(
+            lmdb_call!(liblmdb::mdb_txn_begin(
                 env::env_ptr(&env),
                 ptr::null_mut(),
                 txn_flags,
                 &mut raw_tx
             ));
             let mut wrapped_tx = TxHandle(raw_tx); // For auto-closing etc
-            lmdb_call!(ffi::mdb_dbi_open(
+            lmdb_call!(liblmdb::mdb_dbi_open(
                 raw_tx,
                 name_cstr.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
                 options.flags.bits(),
@@ -727,10 +727,10 @@ impl<'a> Database<'a> {
             }
 
             if let Some(fun) = options.key_cmp {
-                lmdb_call!(ffi::mdb_set_compare(raw_tx, raw, fun));
+                lmdb_call!(liblmdb::mdb_set_compare(raw_tx, raw, fun));
             }
             if let Some(fun) = options.val_cmp {
-                lmdb_call!(ffi::mdb_set_dupsort(raw_tx, raw, fun));
+                lmdb_call!(liblmdb::mdb_set_dupsort(raw_tx, raw, fun));
             }
 
             wrapped_tx.commit()?;
@@ -763,7 +763,7 @@ impl<'a> Database<'a> {
     /// ## Panics
     ///
     /// Panics if `raw` is a handle already owned by `env`.
-    pub unsafe fn from_raw<E>(env: E, raw: ffi::MDB_dbi) -> Self
+    pub unsafe fn from_raw<E>(env: E, raw: liblmdb::MDB_dbi) -> Self
     where
         E: Into<Supercow<'a, Environment>>,
     {
@@ -802,7 +802,7 @@ impl<'a> Database<'a> {
     ///
     /// The caller must ensure that nothing closes the handle until the
     /// resulting `Database` is dropped.
-    pub unsafe fn borrow_raw<E>(env: E, raw: ffi::MDB_dbi) -> Self
+    pub unsafe fn borrow_raw<E>(env: E, raw: liblmdb::MDB_dbi) -> Self
     where
         E: Into<Supercow<'a, Environment>>,
     {
@@ -913,13 +913,13 @@ impl<'a> Database<'a> {
     ///
     /// Renamed to `as_raw()` for consistency.
     #[deprecated(since = "0.4.4", note = "use as_raw() instead")]
-    pub fn dbi(&self) -> ffi::MDB_dbi {
+    pub fn dbi(&self) -> liblmdb::MDB_dbi {
         self.db.dbi
     }
 
     /// Returns the underlying integer handle for this database.
     #[inline]
-    pub fn as_raw(&self) -> ffi::MDB_dbi {
+    pub fn as_raw(&self) -> liblmdb::MDB_dbi {
         self.db.dbi
     }
 
@@ -928,7 +928,7 @@ impl<'a> Database<'a> {
     ///
     /// If this `Database` owns the database handle, it is not closed, but it
     /// is removed from the list of handles owned by the `Environment`.
-    pub fn into_raw(mut self) -> ffi::MDB_dbi {
+    pub fn into_raw(mut self) -> liblmdb::MDB_dbi {
         self.disown();
         self.db.dbi
     }

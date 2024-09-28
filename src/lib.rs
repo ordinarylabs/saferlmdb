@@ -280,8 +280,8 @@ extern crate tempdir;
 
 use std::ffi::CStr;
 
-pub use ffi::mdb_filehandle_t as Fd;
-pub use ffi::mdb_mode_t as FileMode;
+pub use liblmdb::mdb_filehandle_t as Fd;
+pub use liblmdb::mdb_mode_t as FileMode;
 
 macro_rules! lmdb_call {
     ($x:expr) => {{
@@ -298,7 +298,7 @@ pub fn version_str() -> &'static str {
     let mut minor: libc::c_int = 0;
     let mut rev: libc::c_int = 0;
     unsafe {
-        CStr::from_ptr(ffi::mdb_version(&mut major, &mut minor, &mut rev))
+        CStr::from_ptr(liblmdb::mdb_version(&mut major, &mut minor, &mut rev))
             .to_str()
             .unwrap_or("(invalid)")
     }
@@ -310,7 +310,7 @@ pub fn version() -> (i32, i32, i32) {
     let mut minor: libc::c_int = 0;
     let mut rev: libc::c_int = 0;
     unsafe {
-        ffi::mdb_version(&mut major, &mut minor, &mut rev);
+        liblmdb::mdb_version(&mut major, &mut minor, &mut rev);
     }
     (major as i32, minor as i32, rev as i32)
 }
