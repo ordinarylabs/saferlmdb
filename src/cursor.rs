@@ -138,7 +138,7 @@ impl Drop for CursorHandle {
 ///
 /// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # use ordinary_lmdb as lmdb;
+/// # use saferlmdb as lmdb;
 /// # fn main() { }
 /// #
 /// struct CursorOwner<'a> {
@@ -157,7 +157,7 @@ impl Drop for CursorHandle {
 ///
 /// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # use ordinary_lmdb as lmdb;
+/// # use saferlmdb as lmdb;
 /// # fn main() { }
 /// #
 /// // Write this
@@ -652,7 +652,7 @@ impl<'txn, 'db> Cursor<'txn, 'db> {
     /// `MDB_GET_MULTIPLE` operation, except that it does not have a special
     /// case if exactly one value is bound to the key.
     ///
-    /// See `ordinary_lmdb::db::Flags::DUPFIXED` for examples of usage.
+    /// See `saferlmdb::db::Flags::DUPFIXED` for examples of usage.
     #[inline]
     pub fn get_multiple<'access, V: FromLmdbBytes + ?Sized>(
         &mut self,
@@ -701,7 +701,7 @@ impl<'txn, 'db> Cursor<'txn, 'db> {
         /// This corresponds to the `mdb_cursor_get` function with the
         /// `MDB_NEXT_MULTIPLE` operation.
         ///
-        /// See `ordinary_lmdb::db::Flags::DUPFIXED` for examples of usage.
+        /// See `saferlmdb::db::Flags::DUPFIXED` for examples of usage.
         fn next_multiple, liblmdb::MDB_cursor_op_MDB_NEXT_MULTIPLE
     }
 
@@ -1606,7 +1606,7 @@ impl<'txn, 'db> Cursor<'txn, 'db> {
     /// `NODUPDATA` for `DUPDATA` databases to delete everything with the
     /// current key.
     ///
-    /// See `ordinary_lmdb::del::Flags::NODUPDATA` for examples on how `flags` can be used
+    /// See `saferlmdb::del::Flags::NODUPDATA` for examples on how `flags` can be used
     /// to control behaviour.
     #[inline]
     pub fn del(&mut self, access: &mut WriteAccessor, flags: del::Flags) -> Result<()> {

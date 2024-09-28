@@ -306,7 +306,7 @@ impl TxHandle {
 ///
 /// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # use ordinary_lmdb as lmdb;
+/// # use saferlmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &lmdb::ConstTransaction<'x>)
@@ -434,7 +434,7 @@ pub struct ResetTransaction<'env>(ReadTransaction<'env>);
 ///
 /// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # use ordinary_lmdb as lmdb;
+/// # use saferlmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &lmdb::ConstAccessor<'x>)
@@ -475,7 +475,7 @@ impl<'txn> Drop for ConstAccessor<'txn> {
 ///
 /// ```rust,ignore
 /// # #![allow(dead_code)]
-/// # use ordinary_lmdb as lmdb;
+/// # use saferlmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &mut lmdb::WriteAccessor<'x>)
@@ -534,7 +534,7 @@ impl<'env> ConstTransaction<'env> {
     ///
     /// ## Ownership
     ///
-    /// Unlike most other lmdb-zero APIs, accessors do not support shared
+    /// Unlike most other saferlmdb APIs, accessors do not support shared
     /// ownership modes (e.g., where the accessor would hold on to a
     /// `Rc<ConstTransaction>`). If you need dynamically-managed lifetime,
     /// instead simply drop the accessor and get a new one the next time one is

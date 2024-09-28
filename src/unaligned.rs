@@ -29,8 +29,8 @@ use crate::traits::*;
 /// ### Example
 ///
 /// ```
-/// use ordinary_lmdb as lmdb;
-/// use ordinary_lmdb::Unaligned as U;
+/// use saferlmdb as lmdb;
+/// use saferlmdb::Unaligned as U;
 ///
 /// fn get_a_u64(env: &lmdb::Environment, db: &lmdb::Database,
 ///              key: &str) -> u64 {

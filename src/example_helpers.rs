@@ -6,10 +6,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// This is not a lmdb-zero module. It's included by the doc tests to provide
+// This is not a saferlmdb module. It's included by the doc tests to provide
 // common functionality.
 
-use ordinary_lmdb as lmdb;
+use saferlmdb as lmdb;
 
 #[allow(dead_code)]
 fn create_env() -> lmdb::Environment {

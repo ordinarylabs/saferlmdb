@@ -212,7 +212,7 @@ impl<'txn> AssocCursor<'txn> for Arc<ReadTransaction<'static>> {
 /// _This is not a general-purpose serialisation mechanism._ There is no
 /// way to use this trait to store values in a format other than how they
 /// are natively represented in memory. Doing this requires serialisation
-/// into a byte array before passing it onto lmdb-zero.
+/// into a byte array before passing it onto saferlmdb.
 pub trait AsLmdbBytes {
     /// Casts the given reference to a byte slice appropriate for storage
     /// in LMDB.
@@ -285,7 +285,7 @@ pub trait FromReservedLmdbBytes {
 /// ### Use `Unaligned`
 ///
 /// Instead of directly reading and writing the bare type, wrap it in
-/// `ordinary_lmdb::Unaligned`. This adds no overhead in and of itself and removes
+/// `saferlmdb::Unaligned`. This adds no overhead in and of itself and removes
 /// the alignment restriction, but heavily restricts what can be done with a
 /// reference without copying it.
 ///
@@ -362,7 +362,7 @@ pub trait FromReservedLmdbBytes {
 /// ## Example
 ///
 /// ```
-/// use ordinary_lmdb::traits::*;
+/// use saferlmdb::traits::*;
 ///
 /// #[repr(C)]
 /// #[derive(Clone,Copy,Debug)]
@@ -441,7 +441,7 @@ pub unsafe trait LmdbOrdKey: FromLmdbBytes + Ord {
     ///
     /// ## Example
     /// ```
-    /// # use ordinary_lmdb::traits::LmdbOrdKey;
+    /// # use saferlmdb::traits::LmdbOrdKey;
     /// assert!(<u8 as LmdbOrdKey>::ordered_by_bytes());
     /// assert!(!<i8 as LmdbOrdKey>::ordered_by_bytes());
     /// assert!(<str as LmdbOrdKey>::ordered_by_bytes());
@@ -645,8 +645,8 @@ impl<V: LmdbRaw> FromLmdbBytes for V {
             return Err(format!(
                 "Type {} requires alignment {}, but byte array \
                          at {:08x} is misaligned by {} bytes \
-                         (see https://docs.rs/lmdb-zero/{}/\
-                         ordinary_lmdb/traits/trait.LmdbRaw.html#alignment)",
+                         (see https://docs.rs/saferlmdb/{}/\
+                         saferlmdb/traits/trait.LmdbRaw.html#alignment)",
                 V::reported_type(),
                 align,
                 (bytes.as_ptr() as usize),
@@ -695,8 +695,8 @@ impl<V: LmdbRaw> FromLmdbBytes for [V] {
             return Err(format!(
                 "Type [{}] requires alignment {}, but byte array \
                          at {:08x} is misaligned by {} bytes \
-                         (see https://docs.rs/lmdb-zero/{}/\
-                         ordinary_lmdb/traits/trait.LmdbRaw.html#alignment)",
+                         (see https://docs.rs/saferlmdb/{}/\
+                         saferlmdb/traits/trait.LmdbRaw.html#alignment)",
                 V::reported_type(),
                 align,
                 (bytes.as_ptr() as usize),

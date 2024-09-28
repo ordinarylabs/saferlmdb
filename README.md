@@ -1,17 +1,17 @@
-# lmdb-zero
+# saferlmdb
 
-[![Build Status](https://travis-ci.org/AltSysrq/lmdb-zero.svg?branch=master)](https://travis-ci.org/AltSysrq/lmdb-zero)
-[![](http://meritbadge.herokuapp.com/lmdb-zero)](https://crates.io/crates/lmdb-zero)
+[![Build Status](https://travis-ci.org/AltSysrq/saferlmdb.svg?branch=master)](https://travis-ci.org/AltSysrq/saferlmdb)
+[![](http://meritbadge.herokuapp.com/saferlmdb)](https://crates.io/crates/saferlmdb)
 
-lmdb-zero is a near-zero-cost wrapper around [LMDB](http://lmdb.tech/) designed
+saferlmdb is a near-zero-cost wrapper around [LMDB](http://lmdb.tech/) designed
 to allow using the full range of features offered by LMDB while keeping it
 reasonably easy to write safe programs.
 
-`lmdb-zero` is as much as possible a 1:1 mapping of the raw API, mainly
+`saferlmdb` is as much as possible a 1:1 mapping of the raw API, mainly
 providing RAII constructs and integration into Rust's borrow checker to ensure
 safety.
 
-[Documentation](https://docs.rs/lmdb-zero)
+[Documentation](https://docs.rs/saferlmdb)
 
 ## Features
 
@@ -81,7 +81,7 @@ _Forked by Ordinary Labs, LLC_
 
 **0.2.1**: Fix use-after-free when passing database name to `mdb_dbi_open`. Fix
  calling `mdb_txn_abort` after transaction commit fails.
- [#1](https://github.com/AltSysrq/lmdb-zero/pull/1).
+ [#1](https://github.com/AltSysrq/saferlmdb/pull/1).
 
 **0.2.0**: Switch from `lmdb-sys` to newer `liblmdb-sys`.
 
@@ -107,7 +107,7 @@ re-obtain it.
 ### Breaking Changes in 0.3.0
 
 `lmdb::Error` has been completely reworked. It is now an enum with the
-lmdb-zero errors cleanly separated from native LMDB errors. `ValRejected` now
+saferlmdb errors cleanly separated from native LMDB errors. `ValRejected` now
 includes an error message.
 
 `FromLmdbBytes.from_lmdb_bytes()` now returns a `Result<&Self, String>` instead

@@ -288,7 +288,7 @@ impl<'a> Drop for DbHandle<'a> {
 ///
 /// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # use ordinary_lmdb as lmdb;
+/// # use saferlmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &lmdb::Database<'x>)

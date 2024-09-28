@@ -18,7 +18,7 @@
 //! # Example
 //!
 //! ```
-//! use ordinary_lmdb as lmdb;
+//! use saferlmdb as lmdb;
 //! # extern crate tempdir;
 //!
 //! # fn main() {
@@ -117,11 +117,11 @@
 //! appropriately from the accessor of the transaction owning the cursor.
 //!
 //! If you want to define your own types to store in the database, see the
-//! `ordinary_lmdb::traits` submodule.
+//! `saferlmdb::traits` submodule.
 //!
 //! # Lifetimes and Ownership
 //!
-//! Lmdb-zero heavily uses lifetime parameters to allow user code to safely
+//! saferlmdb heavily uses lifetime parameters to allow user code to safely
 //! retain handles into LMDB without extra runtime overhead.
 //!
 //! While this makes the library very flexible, it also makes it somewhat
@@ -140,7 +140,7 @@
 //! As of version 0.4.0, most APIs which construct a value which holds on to
 //! some "parent" value (e.g., creating a `Database` within an `Environment`)
 //! accept anything that can be converted into a [`Supercow`](https://docs.rs/supercow/0.1.0/supercow/).
-//! Deep understanding of `Supercow` itself is not required to use `lmdb-zero`.
+//! Deep understanding of `Supercow` itself is not required to use `saferlmdb`.
 //! The only thing you need to know is that an `Into<Supercow<T>>` means that
 //! you can pass in one of three classes of arguments:
 //!
@@ -217,13 +217,13 @@
 //! the `&str`s returned when querying for items are pointers into the database
 //! itself, valid as long as the accessor is.
 //!
-//! The main traits to look at are `ordinary_lmdb::traits::AsLmdbBytes` and
-//! `ordinary_lmdb::traits::FromLmdbBytes`, which are used to cast between byte
+//! The main traits to look at are `saferlmdb::traits::AsLmdbBytes` and
+//! `saferlmdb::traits::FromLmdbBytes`, which are used to cast between byte
 //! arrays and the types to be stored in the database.
-//! `ordinary_lmdb::traits::FromReservedLmdbBytes` is used if you want to use the
+//! `saferlmdb::traits::FromReservedLmdbBytes` is used if you want to use the
 //! `reserve` methods (in which you write the key only to the database and get
 //! a pointer to a value to fill in after the fact). If you have a
-//! `#[repr(C)]`, `Copy` struct, you can also use `ordinary_lmdb::traits::LmdbRaw`
+//! `#[repr(C)]`, `Copy` struct, you can also use `saferlmdb::traits::LmdbRaw`
 //! if you just want to shove the raw struct itself into the database. All of
 //! these have caveats which can be found on the struct documentation.
 //!
@@ -234,14 +234,14 @@
 //!
 //! # Notes on Memory Safety
 //!
-//! It is not possible to use lmdb-zero without at least one unsafe block,
+//! It is not possible to use saferlmdb without at least one unsafe block,
 //! because doing anything with a memory-mapped file requires making
-//! assumptions about the host environment. Lmdb-zero is not in a position to
+//! assumptions about the host environment. saferlmdb is not in a position to
 //! decide these assumptions, and so they are passed up to the caller.
 //!
 //! However, if these assumptions are met, it should be impossible to cause
 //! memory unsafety (eg, aliasing mutable references; dangling pointers; buffer
-//! under/overflows) by use of lmdb-zero's safe API.
+//! under/overflows) by use of saferlmdb's safe API.
 //!
 //! # Unavailable LMDB APIs
 //!
