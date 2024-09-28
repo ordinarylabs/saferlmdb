@@ -1,11 +1,11 @@
 [package]
-name = "slightlysaferlmdb"
+name = "saferlmdb"
 edition = "2021"
 version = "0.0.0"
 authors = ["FullContact, Inc", "Jason Lingle", "sean watters <sean@ordinarylabs.io>"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/ordinarylabs/slightlysaferlmdb"
+repository = "https://github.com/ordinarylabs/saferlmdb"
 keywords = ["lmdb", "zero-copy", "btree"]
 categories = ["database"]
 
