@@ -7,27 +7,27 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use libc::{self, c_void};
 use std::mem;
 use std::ptr;
-use libc::{self, c_void};
 
-use ffi;
-use supercow::{NonSyncSupercow, Supercow, Phantomcow};
+use liblmdb;
+use supercow::{NonSyncSupercow, Phantomcow, Supercow};
 
-use env::Environment;
-use error::Result;
-use mdb_vals::*;
-use traits::*;
-use dbi::Database;
-use tx::{self, put, del, ConstAccessor, ConstTransaction, WriteAccessor};
-use tx::assert_sensible_cursor;
+use crate::dbi::Database;
+use crate::env::Environment;
+use crate::error::Result;
+use crate::mdb_vals::*;
+use crate::traits::*;
+use crate::tx::assert_sensible_cursor;
+use crate::tx::{self, del, put, ConstAccessor, ConstTransaction, WriteAccessor};
 
 #[derive(Debug)]
-struct CursorHandle(*mut ffi::MDB_cursor);
+struct CursorHandle(*mut liblmdb::MDB_cursor);
 impl Drop for CursorHandle {
     fn drop(&mut self) {
         unsafe {
-            ffi::mdb_cursor_close(self.0);
+            liblmdb::mdb_cursor_close(self.0);
         }
     }
 }
@@ -136,9 +136,9 @@ impl Drop for CursorHandle {
 /// `Cursor` as a structure member and don't plan on using the `dissoc_cursor`
 /// API, you can use one lifetime parameter to fill both without issue.
 ///
-/// ```rust,norun
+/// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # extern crate lmdb_zero as lmdb;
+/// # use ordinary_lmdb as lmdb;
 /// # fn main() { }
 /// #
 /// struct CursorOwner<'a> {
@@ -155,9 +155,9 @@ impl Drop for CursorHandle {
 /// lifetimes. This means that structures containing `&mut Cursor` or functions
 /// taking them as references should generally include both.
 ///
-/// ```rust,norun
+/// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # extern crate lmdb_zero as lmdb;
+/// # use ordinary_lmdb as lmdb;
 /// # fn main() { }
 /// #
 /// // Write this
@@ -173,7 +173,7 @@ impl Drop for CursorHandle {
 /// Attempting to unify the lifetimes on a `&mut Cursor` will often work, but
 /// can also cause the compiler to infer lifetimes in unfavourable ways.
 #[derive(Debug)]
-pub struct Cursor<'txn,'db> {
+pub struct Cursor<'txn, 'db> {
     cursor: CursorHandle,
     txn: NonSyncSupercow<'txn, ConstTransaction<'txn>>,
     _db: Phantomcow<'db, Database<'db>>,
@@ -181,19 +181,17 @@ pub struct Cursor<'txn,'db> {
 
 // Used by transactions to construct/query cursors
 pub unsafe fn create_cursor<'txn, 'db>(
-    raw: *mut ffi::MDB_cursor,
+    raw: *mut liblmdb::MDB_cursor,
     txn: NonSyncSupercow<'txn, ConstTransaction<'txn>>,
-    db: Phantomcow<'db, Database<'db>>)
-    -> Cursor<'txn, 'db>
-{
+    db: Phantomcow<'db, Database<'db>>,
+) -> Cursor<'txn, 'db> {
     Cursor {
         cursor: CursorHandle(raw),
         txn: txn,
         _db: db,
     }
 }
-pub fn txn_ref<'a,'txn: 'a,'db>(cursor: &'a Cursor<'txn,'db>)
-                                -> &'a ConstTransaction<'txn> {
+pub fn txn_ref<'a, 'txn: 'a, 'db>(cursor: &'a Cursor<'txn, 'db>) -> &'a ConstTransaction<'txn> {
     &*cursor.txn
 }
 
@@ -209,21 +207,20 @@ pub struct StaleCursor<'db> {
 }
 
 // Internal
-pub fn to_stale<'a,'db>(cursor: Cursor<'a,'db>,
-                        env: NonSyncSupercow<'db, Environment>)
-                        -> StaleCursor<'db> {
+pub fn to_stale<'a, 'db>(
+    cursor: Cursor<'a, 'db>,
+    env: NonSyncSupercow<'db, Environment>,
+) -> StaleCursor<'db> {
     StaleCursor {
         cursor: cursor.cursor,
         env: env,
         _db: cursor._db,
     }
 }
-pub fn env_ref<'a,'db>(cursor: &'a StaleCursor<'db>)
-                       -> &'a Environment {
+pub fn env_ref<'a, 'db>(cursor: &'a StaleCursor<'db>) -> &'a Environment {
     &*cursor.env
 }
-pub fn stale_cursor_ptr<'db>(cursor: &StaleCursor<'db>)
-                             -> *mut ffi::MDB_cursor {
+pub fn stale_cursor_ptr<'db>(cursor: &StaleCursor<'db>) -> *mut liblmdb::MDB_cursor {
     cursor.cursor.0
 }
 
@@ -247,14 +244,14 @@ macro_rules! cursor_get_0_v {
         #[inline]
         pub fn $method<'access, V : FromLmdbBytes + ?Sized>
             (&mut self, access: &'access ConstAccessor)
-             -> Result<(&'access V)>
+             -> Result<&'access V>
         {
             self.get_0_v(access, $op)
         }
     }
 }
 
-impl<'txn,'db> Cursor<'txn,'db> {
+impl<'txn, 'db> Cursor<'txn, 'db> {
     /// Directly construct a cursor with the given transaction and database
     /// handles.
     ///
@@ -263,19 +260,20 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// low-level; it's simply inconvenient.)
     pub fn construct(
         txn: NonSyncSupercow<'txn, ConstTransaction<'txn>>,
-        db: Supercow<'db, Database<'db>>)
-        -> Result<Self>
-    {
-        try!(tx::assert_same_env(&txn, &db));
+        db: Supercow<'db, Database<'db>>,
+    ) -> Result<Self> {
+        tx::assert_same_env(&txn, &db)?;
 
-        let mut raw: *mut ffi::MDB_cursor = ptr::null_mut();
+        let mut raw: *mut liblmdb::MDB_cursor = ptr::null_mut();
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_open(tx::txptr(&txn), db.as_raw(),
-                                            &mut raw));
+            lmdb_call!(liblmdb::mdb_cursor_open(
+                tx::txptr(&txn),
+                db.as_raw(),
+                &mut raw
+            ));
         }
 
-        Ok(unsafe { create_cursor(raw, txn,
-                                  Supercow::phantom(db)) })
+        Ok(unsafe { create_cursor(raw, txn, Supercow::phantom(db)) })
     }
 
     /// Directly renew a `StaleCursor` into a functional `Cursor` using the
@@ -288,14 +286,15 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// It is an error if `txn` is not actually a `ReadTransaction`.
     pub fn from_stale(
         stale: StaleCursor<'db>,
-        txn: NonSyncSupercow<'txn, ConstTransaction<'txn>>)
-        -> Result<Self>
-    {
-        try!(tx::assert_in_env(&txn, env_ref(&stale)));
+        txn: NonSyncSupercow<'txn, ConstTransaction<'txn>>,
+    ) -> Result<Self> {
+        tx::assert_in_env(&txn, env_ref(&stale))?;
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_renew(
-                tx::txptr(&txn), stale_cursor_ptr(&stale)));
+            lmdb_call!(liblmdb::mdb_cursor_renew(
+                tx::txptr(&txn),
+                stale_cursor_ptr(&stale)
+            ));
         }
 
         Ok(Cursor {
@@ -306,111 +305,141 @@ impl<'txn,'db> Cursor<'txn,'db> {
     }
 
     #[inline]
-    fn get_0_kv<'access, K : FromLmdbBytes + ?Sized,
-                V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor,
-         op: ffi::MDB_cursor_op) -> Result<(&'access K, &'access V)>
-    {
-        try!(assert_sensible_cursor(access, self));
+    fn get_0_kv<'access, K: FromLmdbBytes + ?Sized, V: FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+        op: liblmdb::MDB_cursor_op,
+    ) -> Result<(&'access K, &'access V)> {
+        assert_sensible_cursor(access, self)?;
 
         let mut out_key = EMPTY_VAL;
         let mut out_val = EMPTY_VAL;
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut out_key, &mut out_val, op));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut out_key,
+                &mut out_val,
+                op
+            ));
         }
 
-        Ok((try!(from_val(access, &out_key)),
-            try!(from_val(access, &out_val))))
+        Ok((from_val(access, &out_key)?, from_val(access, &out_val)?))
     }
 
     #[inline]
-    fn get_0_v<'access, V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor,
-         op: ffi::MDB_cursor_op) -> Result<&'access V>
-    {
-        try!(assert_sensible_cursor(access, self));
+    fn get_0_v<'access, V: FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+        op: liblmdb::MDB_cursor_op,
+    ) -> Result<&'access V> {
+        assert_sensible_cursor(access, self)?;
 
         let mut null_key = EMPTY_VAL;
         let mut out_val = EMPTY_VAL;
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut null_key, &mut out_val, op));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut null_key,
+                &mut out_val,
+                op
+            ));
         }
 
         from_val(access, &out_val)
     }
 
     #[inline]
-    fn get_kv_0<K: AsLmdbBytes + ?Sized, V : AsLmdbBytes + ?Sized>
-        (&mut self, key: &K, val: &V, op: ffi::MDB_cursor_op) -> Result<()>
-    {
+    fn get_kv_0<K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + ?Sized>(
+        &mut self,
+        key: &K,
+        val: &V,
+        op: liblmdb::MDB_cursor_op,
+    ) -> Result<()> {
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(val);
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut mv_key, &mut mv_val, op));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut mv_key,
+                &mut mv_val,
+                op
+            ));
         }
 
         Ok(())
     }
 
     #[inline]
-    fn get_kv_v<'access, K : AsLmdbBytes + ?Sized,
-                V : AsLmdbBytes + FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor,
-         key: &K, val: &V, op: ffi::MDB_cursor_op) -> Result<&'access V>
-    {
-        try!(assert_sensible_cursor(access, self));
+    fn get_kv_v<'access, K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+        val: &V,
+        op: liblmdb::MDB_cursor_op,
+    ) -> Result<&'access V> {
+        assert_sensible_cursor(access, self)?;
 
         let mut mv_key = as_val(key);
         let mut inout_val = as_val(val);
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut mv_key, &mut inout_val, op));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut mv_key,
+                &mut inout_val,
+                op
+            ));
         }
 
         from_val(access, &inout_val)
     }
 
     #[inline]
-    fn get_k_v<'access, K : AsLmdbBytes + ?Sized,
-               V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor,
-         key: &K, op: ffi::MDB_cursor_op) -> Result<&'access V>
-    {
-        try!(assert_sensible_cursor(access, self));
+    fn get_k_v<'access, K: AsLmdbBytes + ?Sized, V: FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+        op: liblmdb::MDB_cursor_op,
+    ) -> Result<&'access V> {
+        assert_sensible_cursor(access, self)?;
 
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut mv_key, &mut out_val, op));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut mv_key,
+                &mut out_val,
+                op
+            ));
         }
 
         from_val(access, &out_val)
     }
 
     #[inline]
-    fn get_k_kv<'access, K : AsLmdbBytes + FromLmdbBytes + ?Sized,
-                V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor,
-         key: &K, op: ffi::MDB_cursor_op) -> Result<(&'access K, &'access V)>
-    {
-        try!(assert_sensible_cursor(access, self));
+    fn get_k_kv<'access, K: AsLmdbBytes + FromLmdbBytes + ?Sized, V: FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+        op: liblmdb::MDB_cursor_op,
+    ) -> Result<(&'access K, &'access V)> {
+        assert_sensible_cursor(access, self)?;
 
         let mut inout_key = as_val(key);
         let mut out_val = EMPTY_VAL;
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut inout_key, &mut out_val, op));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut inout_key,
+                &mut out_val,
+                op
+            ));
         }
 
-        Ok((try!(from_val(access, &inout_key)),
-            try!(from_val(access, &out_val))))
+        Ok((from_val(access, &inout_key)?, from_val(access, &out_val)?))
     }
 
     cursor_get_0_kv! {
@@ -431,9 +460,9 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Germany", "Berlin", f).unwrap();
-        ///   access.put(&db, "France", "Paris", f).unwrap();
-        ///   access.put(&db, "Latvia", "Rīga", f).unwrap();
+        ///   access.put(&db, "Germany", "Berlin", f.clone()).unwrap();
+        ///   access.put(&db, "France", "Paris", f.clone()).unwrap();
+        ///   access.put(&db, "Latvia", "Rīga", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("France", "Paris"), cursor.first(&access).unwrap());
@@ -441,7 +470,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn first, ffi::MDB_cursor_op::MDB_FIRST
+        fn first, liblmdb::MDB_cursor_op_MDB_FIRST
     }
 
     cursor_get_0_v! {
@@ -464,10 +493,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Fruit", "Durian", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Durian", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("Fruit", "Orange"), cursor.last(&access).unwrap());
@@ -476,7 +505,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn first_dup, ffi::MDB_cursor_op::MDB_FIRST_DUP
+        fn first_dup, liblmdb::MDB_cursor_op_MDB_FIRST_DUP
     }
 
     /// Positions the cursor at the given (key,value) pair.
@@ -497,10 +526,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-    ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-    ///   access.put(&db, "Fruit", "Durian", f).unwrap();
-    ///   access.put(&db, "Animal", "Badger", f).unwrap();
+    ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Durian", f.clone()).unwrap();
+    ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   cursor.seek_kv("Fruit", "Durian").unwrap();
@@ -511,10 +540,12 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn seek_kv<K : AsLmdbBytes + ?Sized, V : AsLmdbBytes + ?Sized>
-        (&mut self, key: &K, val: &V) -> Result<()>
-    {
-        self.get_kv_0(key, val, ffi::MDB_cursor_op::MDB_GET_BOTH)
+    pub fn seek_kv<K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + ?Sized>(
+        &mut self,
+        key: &K,
+        val: &V,
+    ) -> Result<()> {
+        self.get_kv_0(key, val, liblmdb::MDB_cursor_op_MDB_GET_BOTH)
     }
 
     /// Positions the cursor at the given key and the "nearest" value to `val`,
@@ -539,11 +570,11 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Animal", "Badger", f).unwrap();
-    ///   access.put(&db, "Fruit", "Banana", f).unwrap();
-    ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-    ///   access.put(&db, "Fruit", "Durian", f).unwrap();
-    ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+    ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Banana", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Durian", f.clone()).unwrap();
+    ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   assert_eq!("Durian", cursor.seek_k_nearest_v::<str,str>(
@@ -561,12 +592,17 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn seek_k_nearest_v<'access, K : AsLmdbBytes + ?Sized,
-                            V : AsLmdbBytes + FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor,
-         key: &K, val: &V) -> Result<&'access V>
-    {
-        self.get_kv_v(access, key, val, ffi::MDB_cursor_op::MDB_GET_BOTH_RANGE)
+    pub fn seek_k_nearest_v<
+        'access,
+        K: AsLmdbBytes + ?Sized,
+        V: AsLmdbBytes + FromLmdbBytes + ?Sized,
+    >(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+        val: &V,
+    ) -> Result<&'access V> {
+        self.get_kv_v(access, key, val, liblmdb::MDB_cursor_op_MDB_GET_BOTH_RANGE)
     }
 
     cursor_get_0_kv! {
@@ -586,9 +622,9 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Germany", "Berlin", f).unwrap();
-        ///   access.put(&db, "France", "Paris", f).unwrap();
-        ///   access.put(&db, "Latvia", "Rīga", f).unwrap();
+        ///   access.put(&db, "Germany", "Berlin", f.clone()).unwrap();
+        ///   access.put(&db, "France", "Paris", f.clone()).unwrap();
+        ///   access.put(&db, "Latvia", "Rīga", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   cursor.seek_k::<str,str>(&access, "Latvia").unwrap();
@@ -597,7 +633,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn get_current, ffi::MDB_cursor_op::MDB_GET_CURRENT
+        fn get_current, liblmdb::MDB_cursor_op_MDB_GET_CURRENT
     }
 
     /// Returns as many items as possible with the current key from the
@@ -616,20 +652,23 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// `MDB_GET_MULTIPLE` operation, except that it does not have a special
     /// case if exactly one value is bound to the key.
     ///
-    /// See `lmdb_zero::db::DUPFIXED` for examples of usage.
+    /// See `ordinary_lmdb::db::Flags::DUPFIXED` for examples of usage.
     #[inline]
-    pub fn get_multiple<'access, V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor)
-         -> Result<(&'access V)>
-    {
-        try!(assert_sensible_cursor(access, self));
+    pub fn get_multiple<'access, V: FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+    ) -> Result<&'access V> {
+        assert_sensible_cursor(access, self)?;
 
         let mut null_key = EMPTY_VAL;
         let mut out_val = EMPTY_VAL;
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_get(
-                self.cursor.0, &mut null_key, &mut out_val,
-                ffi::MDB_cursor_op::MDB_GET_MULTIPLE));
+            lmdb_call!(liblmdb::mdb_cursor_get(
+                self.cursor.0,
+                &mut null_key,
+                &mut out_val,
+                liblmdb::MDB_cursor_op_MDB_GET_MULTIPLE
+            ));
         }
 
         if out_val.mv_data.is_null() {
@@ -643,14 +682,16 @@ impl<'txn,'db> Cursor<'txn,'db> {
             // modify the cursor, so the caller's follow-up call to
             // next_multiple() will still be sound.
             unsafe {
-                lmdb_call!(ffi::mdb_cursor_get(
-                    self.cursor.0, &mut null_key, &mut out_val,
-                    ffi::MDB_cursor_op::MDB_GET_CURRENT));
+                lmdb_call!(liblmdb::mdb_cursor_get(
+                    self.cursor.0,
+                    &mut null_key,
+                    &mut out_val,
+                    liblmdb::MDB_cursor_op_MDB_GET_CURRENT
+                ));
             }
         }
 
         from_val(access, &out_val)
-
     }
 
     cursor_get_0_v! {
@@ -660,8 +701,8 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// This corresponds to the `mdb_cursor_get` function with the
         /// `MDB_NEXT_MULTIPLE` operation.
         ///
-        /// See `lmdb_zero::db::DUPFIXED` for examples of usage.
-        fn next_multiple, ffi::MDB_cursor_op::MDB_NEXT_MULTIPLE
+        /// See `ordinary_lmdb::db::Flags::DUPFIXED` for examples of usage.
+        fn next_multiple, liblmdb::MDB_cursor_op_MDB_NEXT_MULTIPLE
     }
 
     cursor_get_0_kv! {
@@ -682,9 +723,9 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Germany", "Berlin", f).unwrap();
-        ///   access.put(&db, "France", "Paris", f).unwrap();
-        ///   access.put(&db, "Latvia", "Rīga", f).unwrap();
+        ///   access.put(&db, "Germany", "Berlin", f.clone()).unwrap();
+        ///   access.put(&db, "France", "Paris", f.clone()).unwrap();
+        ///   access.put(&db, "Latvia", "Rīga", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("Latvia", "Rīga"), cursor.last(&access).unwrap());
@@ -692,7 +733,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn last, ffi::MDB_cursor_op::MDB_LAST
+        fn last, liblmdb::MDB_cursor_op_MDB_LAST
     }
 
     cursor_get_0_v! {
@@ -715,11 +756,11 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Fruit", "Durian", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Durian", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!("Apple", cursor.seek_k::<str,str>(&access, "Fruit").unwrap());
@@ -728,7 +769,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn last_dup, ffi::MDB_cursor_op::MDB_LAST_DUP
+        fn last_dup, liblmdb::MDB_cursor_op_MDB_LAST_DUP
     }
 
     cursor_get_0_kv! {
@@ -751,10 +792,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("Animal", "Badger"), cursor.first(&access).unwrap());
@@ -766,7 +807,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn next, ffi::MDB_cursor_op::MDB_NEXT
+        fn next, liblmdb::MDB_cursor_op_MDB_NEXT
     }
 
     cursor_get_0_kv! {
@@ -789,10 +830,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!("Apple", cursor.seek_k::<str,str>(&access, "Fruit").unwrap());
@@ -802,7 +843,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn next_dup, ffi::MDB_cursor_op::MDB_NEXT_DUP
+        fn next_dup, liblmdb::MDB_cursor_op_MDB_NEXT_DUP
     }
 
     cursor_get_0_kv! {
@@ -826,10 +867,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("Animal", "Badger"), cursor.first(&access).unwrap());
@@ -840,7 +881,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn next_nodup, ffi::MDB_cursor_op::MDB_NEXT_NODUP
+        fn next_nodup, liblmdb::MDB_cursor_op_MDB_NEXT_NODUP
     }
 
     cursor_get_0_kv! {
@@ -863,10 +904,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("Veggie", "Carrot"), cursor.last(&access).unwrap());
@@ -878,7 +919,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn prev, ffi::MDB_cursor_op::MDB_PREV
+        fn prev, liblmdb::MDB_cursor_op_MDB_PREV
     }
 
     cursor_get_0_kv! {
@@ -901,10 +942,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!("Apple", cursor.seek_k::<str,str>(&access, "Fruit").unwrap());
@@ -915,7 +956,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn prev_dup, ffi::MDB_cursor_op::MDB_PREV_DUP
+        fn prev_dup, liblmdb::MDB_cursor_op_MDB_PREV_DUP
     }
 
     cursor_get_0_kv! {
@@ -938,10 +979,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// {
         ///   let mut access = txn.access();
         ///   let f = lmdb::put::Flags::empty();
-        ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-        ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-        ///   access.put(&db, "Animal", "Badger", f).unwrap();
-        ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+        ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+        ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+        ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+        ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
         ///
         ///   let mut cursor = txn.cursor(&db).unwrap();
         ///   assert_eq!(("Veggie", "Carrot"), cursor.last(&access).unwrap());
@@ -952,7 +993,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
         /// txn.commit().unwrap();
         /// # }
         /// ```
-        fn prev_nodup, ffi::MDB_cursor_op::MDB_PREV_NODUP
+        fn prev_nodup, liblmdb::MDB_cursor_op_MDB_PREV_NODUP
     }
 
     /// Positions the cursor at the first item of the given key.
@@ -973,10 +1014,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-    ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-    ///   access.put(&db, "Animal", "Badger", f).unwrap();
-    ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+    ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+    ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+    ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   assert_eq!("Apple", cursor.seek_k::<str,str>(&access, "Fruit").unwrap());
@@ -985,12 +1026,12 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn seek_k<'access, K : AsLmdbBytes + ?Sized,
-                  V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor, key: &K)
-        -> Result<&'access V>
-    {
-        self.get_k_v(access, key, ffi::MDB_cursor_op::MDB_SET)
+    pub fn seek_k<'access, K: AsLmdbBytes + ?Sized, V: FromLmdbBytes + ?Sized>(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+    ) -> Result<&'access V> {
+        self.get_k_v(access, key, liblmdb::MDB_cursor_op_MDB_SET)
     }
 
     /// Positions the cursor at the first item of the given key.
@@ -1011,10 +1052,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-    ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-    ///   access.put(&db, "Animal", "Badger", f).unwrap();
-    ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+    ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+    ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+    ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   assert_eq!(("Fruit", "Apple"), cursor.seek_k_both(&access, "Fruit").unwrap());
@@ -1023,12 +1064,16 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn seek_k_both<'access, K : AsLmdbBytes + FromLmdbBytes + ?Sized,
-                       V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor, key: &K)
-         -> Result<(&'access K, &'access V)>
-    {
-        self.get_k_kv(access, key, ffi::MDB_cursor_op::MDB_SET_KEY)
+    pub fn seek_k_both<
+        'access,
+        K: AsLmdbBytes + FromLmdbBytes + ?Sized,
+        V: FromLmdbBytes + ?Sized,
+    >(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+    ) -> Result<(&'access K, &'access V)> {
+        self.get_k_kv(access, key, liblmdb::MDB_cursor_op_MDB_SET_KEY)
     }
 
     /// Positions the cursor at the first item whose key is greater than or
@@ -1050,9 +1095,9 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-    ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-    ///   access.put(&db, "Animal", "Badger", f).unwrap();
+    ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+    ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   assert_eq!(("Fruit", "Apple"), cursor.seek_range_k(&access, "Fog").unwrap());
@@ -1062,12 +1107,16 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn seek_range_k<'access, K : AsLmdbBytes + FromLmdbBytes + ?Sized,
-                        V : FromLmdbBytes + ?Sized>
-        (&mut self, access: &'access ConstAccessor, key: &K)
-         -> Result<(&'access K, &'access V)>
-    {
-        self.get_k_kv(access, key, ffi::MDB_cursor_op::MDB_SET_RANGE)
+    pub fn seek_range_k<
+        'access,
+        K: AsLmdbBytes + FromLmdbBytes + ?Sized,
+        V: FromLmdbBytes + ?Sized,
+    >(
+        &mut self,
+        access: &'access ConstAccessor,
+        key: &K,
+    ) -> Result<(&'access K, &'access V)> {
+        self.get_k_kv(access, key, liblmdb::MDB_cursor_op_MDB_SET_RANGE)
     }
 
     /// Writes a single value through this cursor.
@@ -1094,26 +1143,32 @@ impl<'txn,'db> Cursor<'txn,'db> {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
     ///   let mut cursor = txn.cursor(&db).unwrap();
-    ///   cursor.put(&mut access, "Germany", "Berlin", f).unwrap();
+    ///   cursor.put(&mut access, "Germany", "Berlin", f.clone()).unwrap();
     ///   assert_eq!(("Germany", "Berlin"), cursor.get_current(&access).unwrap());
     /// }
     /// txn.commit().unwrap();
     /// # }
     /// ```
     #[inline]
-    pub fn put<K : AsLmdbBytes + ?Sized, V : AsLmdbBytes + ?Sized>
-        (&mut self, access: &mut WriteAccessor,
-         key: &K, val: &V, flags: put::Flags) -> Result<()>
-    {
-        try!(assert_sensible_cursor(&*access, self));
+    pub fn put<K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + ?Sized>(
+        &mut self,
+        access: &mut WriteAccessor,
+        key: &K,
+        val: &V,
+        flags: put::Flags,
+    ) -> Result<()> {
+        assert_sensible_cursor(&*access, self)?;
 
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(val);
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_put(
-                self.cursor.0, &mut mv_key, &mut mv_val,
-                flags.bits()));
+            lmdb_call!(liblmdb::mdb_cursor_put(
+                self.cursor.0,
+                &mut mv_key,
+                &mut mv_val,
+                flags.bits()
+            ));
         }
 
         Ok(())
@@ -1135,6 +1190,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// ## Example
     ///
     /// ```
+    ///
     /// # include!(concat!(env!("CARGO_MANIFEST_DIR"),"/src/example_helpers.rs"));
     /// # fn main() {
     /// # let env = create_env();
@@ -1146,8 +1202,8 @@ impl<'txn,'db> Cursor<'txn,'db> {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
     ///   let mut cursor = txn.cursor(&db).unwrap();
-    ///   cursor.put(&mut access, "Fourty-two", &42u32, f).unwrap();
-    ///   cursor.overwrite(&mut access, "Fourty-two", &54u32, f).unwrap();
+    ///   cursor.put(&mut access, "Fourty-two", &42u32, f.clone()).unwrap();
+    ///   cursor.overwrite(&mut access, "Fourty-two", &54u32, f.clone()).unwrap();
     ///   assert_eq!(("Fourty-two", u(&54u32)),
     ///              cursor.get_current(&access).unwrap());
     /// }
@@ -1155,19 +1211,25 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn overwrite<K : AsLmdbBytes + ?Sized, V : AsLmdbBytes + ?Sized>
-        (&mut self, access: &mut WriteAccessor,
-         key: &K, val: &V, flags: put::Flags) -> Result<()>
-    {
-        try!(assert_sensible_cursor(&*access, self));
+    pub fn overwrite<K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + ?Sized>(
+        &mut self,
+        access: &mut WriteAccessor,
+        key: &K,
+        val: &V,
+        flags: put::Flags,
+    ) -> Result<()> {
+        assert_sensible_cursor(&*access, self)?;
 
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(val);
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_put(
-                self.cursor.0, &mut mv_key, &mut mv_val,
-                flags.bits() | ffi::MDB_CURRENT));
+            lmdb_call!(liblmdb::mdb_cursor_put(
+                self.cursor.0,
+                &mut mv_key,
+                &mut mv_val,
+                flags.bits() | liblmdb::MDB_CURRENT
+            ));
         }
 
         Ok(())
@@ -1186,6 +1248,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// ## Example
     ///
     /// ```
+    ///
     /// # include!(concat!(env!("CARGO_MANIFEST_DIR"),"/src/example_helpers.rs"));
     /// #[repr(C, packed)]
     /// #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -1204,7 +1267,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
     ///   let f = lmdb::put::Flags::empty();
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   {
-    ///     let v: &mut MyStruct = cursor.reserve(&mut access, "foo", f).unwrap();
+    ///     let v: &mut MyStruct = cursor.reserve(&mut access, "foo", f.clone()).unwrap();
     ///     // Write directly into the database
     ///     v.x = 42;
     ///     v.y = 56;
@@ -1217,14 +1280,13 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn reserve<'access, K : AsLmdbBytes + ?Sized,
-                   V : FromReservedLmdbBytes + Sized>
-        (&mut self, access: &'access mut WriteAccessor,
-         key: &K, flags: put::Flags) -> Result<&'access mut V>
-    {
-        unsafe {
-            self.reserve_unsized(access, key, mem::size_of::<V>(), flags)
-        }
+    pub fn reserve<'access, K: AsLmdbBytes + ?Sized, V: FromReservedLmdbBytes + Sized>(
+        &mut self,
+        access: &'access mut WriteAccessor,
+        key: &K,
+        flags: put::Flags,
+    ) -> Result<&'access mut V> {
+        unsafe { self.reserve_unsized(access, key, mem::size_of::<V>(), flags) }
     }
 
     /// Reserves space for an entry with the given key and returns a pointer to
@@ -1260,7 +1322,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
     ///   let f = lmdb::put::Flags::empty();
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   {
-    ///     let v: &mut [u8] = cursor.reserve_array(&mut access, "foo", 4, f).unwrap();
+    ///     let v: &mut [u8] = cursor.reserve_array(&mut access, "foo", 4, f.clone()).unwrap();
     ///     // Write directly into the database
     ///     v[0] = b'b'; v[1] = b'y'; v[2] = b't'; v[3] = b'e';
     ///   }
@@ -1271,16 +1333,14 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn reserve_array<'access, K : AsLmdbBytes + ?Sized,
-                         V : LmdbRaw>
-        (&mut self, access: &'access mut WriteAccessor,
-         key: &K, count: usize, flags: put::Flags)
-         -> Result<&'access mut [V]>
-    {
-        unsafe {
-            self.reserve_unsized(
-                access, key, count * mem::size_of::<V>(), flags)
-        }
+    pub fn reserve_array<'access, K: AsLmdbBytes + ?Sized, V: LmdbRaw>(
+        &mut self,
+        access: &'access mut WriteAccessor,
+        key: &K,
+        count: usize,
+        flags: put::Flags,
+    ) -> Result<&'access mut [V]> {
+        unsafe { self.reserve_unsized(access, key, count * mem::size_of::<V>(), flags) }
     }
 
     /// Reserves space for an entry with the given key and returns a pointer to
@@ -1294,20 +1354,29 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// ## Unsafety
     ///
     /// The caller must ensure that `size` is a valid size for `V`.
-    pub unsafe fn reserve_unsized<'access, K : AsLmdbBytes + ?Sized,
-                                  V : FromReservedLmdbBytes + ?Sized>
-        (&mut self, access: &'access mut WriteAccessor,
-         key: &K, size: usize, flags: put::Flags) -> Result<&'access mut V>
-    {
-        try!(assert_sensible_cursor(&*access, self));
+    pub unsafe fn reserve_unsized<
+        'access,
+        K: AsLmdbBytes + ?Sized,
+        V: FromReservedLmdbBytes + ?Sized,
+    >(
+        &mut self,
+        access: &'access mut WriteAccessor,
+        key: &K,
+        size: usize,
+        flags: put::Flags,
+    ) -> Result<&'access mut V> {
+        assert_sensible_cursor(&*access, self)?;
 
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
         out_val.mv_size = size;
 
-        lmdb_call!(ffi::mdb_cursor_put(
-            self.cursor.0, &mut mv_key, &mut out_val,
-            flags.bits() | ffi::MDB_RESERVE));
+        lmdb_call!(liblmdb::mdb_cursor_put(
+            self.cursor.0,
+            &mut mv_key,
+            &mut out_val,
+            flags.bits() | liblmdb::MDB_RESERVE
+        ));
 
         Ok(from_reserved(access, &out_val))
     }
@@ -1340,10 +1409,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
     ///   let mut cursor = txn.cursor(&db).unwrap();
-    ///   cursor.put(&mut access, "count", &1u32, f).unwrap();
+    ///   cursor.put(&mut access, "count", &1u32, f.clone()).unwrap();
     ///   {
     ///     let count: &mut U<u32> = cursor.overwrite_in_place(
-    ///       &mut access, "count", f).unwrap();
+    ///       &mut access, "count", f.clone()).unwrap();
     ///     // Directly edit the value in the database
     ///     let count2 = count.get() + 1;
     ///     count.set(count2);
@@ -1354,15 +1423,17 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn overwrite_in_place<'access, K : AsLmdbBytes + ?Sized,
-                              V : FromReservedLmdbBytes + Sized>
-        (&mut self, access: &'access mut WriteAccessor,
-         key: &K, flags: put::Flags) -> Result<&'access mut V>
-    {
-        unsafe {
-            self.overwrite_in_place_unsized(
-                access, key, mem::size_of::<V>(), flags)
-        }
+    pub fn overwrite_in_place<
+        'access,
+        K: AsLmdbBytes + ?Sized,
+        V: FromReservedLmdbBytes + Sized,
+    >(
+        &mut self,
+        access: &'access mut WriteAccessor,
+        key: &K,
+        flags: put::Flags,
+    ) -> Result<&'access mut V> {
+        unsafe { self.overwrite_in_place_unsized(access, key, mem::size_of::<V>(), flags) }
     }
 
     /// Returns a writable reference to the array of values belonging to the
@@ -1388,10 +1459,10 @@ impl<'txn,'db> Cursor<'txn,'db> {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
     ///   let mut cursor = txn.cursor(&db).unwrap();
-    ///   cursor.put(&mut access, "foo", "bar", f).unwrap();
+    ///   cursor.put(&mut access, "foo", "bar", f.clone()).unwrap();
     ///   {
     ///     let data: &mut [u8] = cursor.overwrite_in_place_array(
-    ///       &mut access, "foo", 3, f).unwrap();
+    ///       &mut access, "foo", 3, f.clone()).unwrap();
     ///     // Directly edit the value in the database
     ///     data[2] = b'z';
     ///   }
@@ -1401,16 +1472,14 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// # }
     /// ```
     #[inline]
-    pub fn overwrite_in_place_array<'access, K : AsLmdbBytes + ?Sized,
-                                    V : LmdbRaw>
-        (&mut self, access: &'access mut WriteAccessor,
-         key: &K, count: usize, flags: put::Flags)
-         -> Result<&'access mut [V]>
-    {
-        unsafe {
-            self.overwrite_in_place_unsized(
-                access, key, count * mem::size_of::<V>(), flags)
-        }
+    pub fn overwrite_in_place_array<'access, K: AsLmdbBytes + ?Sized, V: LmdbRaw>(
+        &mut self,
+        access: &'access mut WriteAccessor,
+        key: &K,
+        count: usize,
+        flags: put::Flags,
+    ) -> Result<&'access mut [V]> {
+        unsafe { self.overwrite_in_place_unsized(access, key, count * mem::size_of::<V>(), flags) }
     }
 
     /// Returns a writable reference to the value belonging to the given key in
@@ -1421,20 +1490,29 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// ## Unsafety
     ///
     /// The caller must ensure `size` is a valid size of `V`.
-    pub unsafe fn overwrite_in_place_unsized
-        <'access, K : AsLmdbBytes + ?Sized, V : FromReservedLmdbBytes + ?Sized>
-        (&mut self, access: &'access mut WriteAccessor,
-         key: &K, size: usize, flags: put::Flags) -> Result<&'access mut V>
-    {
-        try!(assert_sensible_cursor(&*access, self));
+    pub unsafe fn overwrite_in_place_unsized<
+        'access,
+        K: AsLmdbBytes + ?Sized,
+        V: FromReservedLmdbBytes + ?Sized,
+    >(
+        &mut self,
+        access: &'access mut WriteAccessor,
+        key: &K,
+        size: usize,
+        flags: put::Flags,
+    ) -> Result<&'access mut V> {
+        assert_sensible_cursor(&*access, self)?;
 
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
         out_val.mv_size = size;
 
-        lmdb_call!(ffi::mdb_cursor_put(
-            self.cursor.0, &mut mv_key, &mut out_val,
-            flags.bits() | ffi::MDB_RESERVE | ffi::MDB_CURRENT));
+        lmdb_call!(liblmdb::mdb_cursor_put(
+            self.cursor.0,
+            &mut mv_key,
+            &mut out_val,
+            flags.bits() | liblmdb::MDB_RESERVE | liblmdb::MDB_CURRENT
+        ));
 
         Ok(from_reserved(access, &out_val))
     }
@@ -1484,12 +1562,14 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// txn.commit().unwrap();
     /// # }
     /// ```
-    pub fn put_multiple<K : AsLmdbBytes + ?Sized, V : LmdbRaw>
-        (&mut self, access: &mut WriteAccessor,
-         key: &K, values: &[V], flags: put::Flags)
-         -> Result<usize>
-    {
-        try!(assert_sensible_cursor(&*access, self));
+    pub fn put_multiple<K: AsLmdbBytes + ?Sized, V: LmdbRaw>(
+        &mut self,
+        access: &mut WriteAccessor,
+        key: &K,
+        values: &[V],
+        flags: put::Flags,
+    ) -> Result<usize> {
+        assert_sensible_cursor(&*access, self)?;
 
         // Some LMDB versions didn't (don't?) handle count=0 correctly
         if values.is_empty() {
@@ -1497,18 +1577,24 @@ impl<'txn,'db> Cursor<'txn,'db> {
         }
 
         let mut mv_key = as_val(key);
-        let mut mv_vals = [ ffi::MDB_val {
-            mv_size: mem::size_of::<V>() as libc::size_t,
-            mv_data: values.as_lmdb_bytes().as_ptr() as *mut c_void,
-        }, ffi::MDB_val {
-            mv_size: values.len() as libc::size_t,
-            mv_data: ptr::null_mut(),
-        }];
+        let mut mv_vals = [
+            liblmdb::MDB_val {
+                mv_size: mem::size_of::<V>() as libc::size_t,
+                mv_data: values.as_lmdb_bytes().as_ptr() as *mut c_void,
+            },
+            liblmdb::MDB_val {
+                mv_size: values.len() as libc::size_t,
+                mv_data: ptr::null_mut(),
+            },
+        ];
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_put(
-                self.cursor.0, &mut mv_key, mv_vals.as_mut_ptr(),
-                flags.bits() | ffi::MDB_MULTIPLE));
+            lmdb_call!(liblmdb::mdb_cursor_put(
+                self.cursor.0,
+                &mut mv_key,
+                mv_vals.as_mut_ptr(),
+                flags.bits() | liblmdb::MDB_MULTIPLE
+            ));
         }
 
         Ok(mv_vals[1].mv_size as usize)
@@ -1520,15 +1606,14 @@ impl<'txn,'db> Cursor<'txn,'db> {
     /// `NODUPDATA` for `DUPDATA` databases to delete everything with the
     /// current key.
     ///
-    /// See `lmdb_zero::del::NODUPDATA` for examples on how `flags` can be used
+    /// See `ordinary_lmdb::del::Flags::NODUPDATA` for examples on how `flags` can be used
     /// to control behaviour.
     #[inline]
-    pub fn del(&mut self, access: &mut WriteAccessor,
-               flags: del::Flags) -> Result<()> {
-        try!(assert_sensible_cursor(&*access, self));
+    pub fn del(&mut self, access: &mut WriteAccessor, flags: del::Flags) -> Result<()> {
+        assert_sensible_cursor(&*access, self)?;
 
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_del(self.cursor.0, flags.bits()));
+            lmdb_call!(liblmdb::mdb_cursor_del(self.cursor.0, flags.bits()));
         }
 
         Ok(())
@@ -1541,7 +1626,7 @@ impl<'txn,'db> Cursor<'txn,'db> {
     pub fn count(&mut self) -> Result<usize> {
         let mut raw: libc::size_t = 0;
         unsafe {
-            lmdb_call!(ffi::mdb_cursor_count(self.cursor.0, &mut raw));
+            lmdb_call!(liblmdb::mdb_cursor_count(self.cursor.0, &mut raw));
         }
         Ok(raw as usize)
     }
@@ -1549,20 +1634,28 @@ impl<'txn,'db> Cursor<'txn,'db> {
 
 #[cfg(test)]
 mod test {
-    use dbi::{db, Database, DatabaseOptions};
-    use error::LmdbResultExt;
-    use tx::{put, WriteTransaction};
-    use test_helpers::*;
-    use unaligned::Unaligned as U;
-    use unaligned::unaligned;
+    use crate::dbi::{db, Database, DatabaseOptions};
+    use crate::error::LmdbResultExt;
+    use crate::test_helpers::*;
+    use crate::tx::{put, WriteTransaction};
+    use crate::unaligned::unaligned;
+    use crate::unaligned::Unaligned as U;
 
     #[test]
     fn get_multiple_with_one_item() {
         let env = create_env();
         let db = Database::open(
-            &env, None, &DatabaseOptions::new(
-                db::DUPSORT | db::INTEGERKEY | db::DUPFIXED | db::INTEGERDUP |
-                db::CREATE)).unwrap();
+            &env,
+            None,
+            &DatabaseOptions::new(
+                db::Flags::DUPSORT
+                    | db::Flags::INTEGERKEY
+                    | db::Flags::DUPFIXED
+                    | db::Flags::INTEGERDUP
+                    | db::Flags::CREATE,
+            ),
+        )
+        .unwrap();
         let txn = WriteTransaction::new(&env).unwrap();
         {
             let key: i32 = 42;
@@ -1572,13 +1665,18 @@ mod test {
             access.put(&db, &key, &val, put::Flags::empty()).unwrap();
 
             let mut cursor = txn.cursor(&db).unwrap();
-            cursor.seek_k::<U<i32>, U<i32>>(&access, unaligned(&key)).unwrap();
+            cursor
+                .seek_k::<U<i32>, U<i32>>(&access, unaligned(&key))
+                .unwrap();
             let vals = cursor.get_multiple::<[U<i32>]>(&access).unwrap();
             assert_eq!(1, vals.len());
             assert_eq!(val, vals[0].get());
 
-            assert!(cursor.next_multiple::<[U<i32>]>(&access)
-                    .to_opt().unwrap().is_none());
+            assert!(cursor
+                .next_multiple::<[U<i32>]>(&access)
+                .to_opt()
+                .unwrap()
+                .is_none());
         }
     }
 }

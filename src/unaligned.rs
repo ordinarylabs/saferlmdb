@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops;
 
-use traits::*;
+use crate::traits::*;
 
 /// Wrapper for arbitrary `Copy` types which lifts their alignment
 /// restrictions.
@@ -29,8 +29,8 @@ use traits::*;
 /// ### Example
 ///
 /// ```
-/// use lmdb_zero as lmdb;
-/// use lmdb_zero::Unaligned as U;
+/// use ordinary_lmdb as lmdb;
+/// use ordinary_lmdb::Unaligned as U;
 ///
 /// fn get_a_u64(env: &lmdb::Environment, db: &lmdb::Database,
 ///              key: &str) -> u64 {
@@ -40,29 +40,32 @@ use traits::*;
 /// }
 /// ```
 #[repr(packed)]
-pub struct Unaligned<T : LmdbRawIfUnaligned>(T);
+pub struct Unaligned<T: LmdbRawIfUnaligned>(T);
 
-impl<T : LmdbRawIfUnaligned> Clone for Unaligned<T> {
+impl<T: LmdbRawIfUnaligned> Clone for Unaligned<T> {
     fn clone(&self) -> Self {
         Unaligned(self.0)
     }
 }
 
-impl<T : LmdbRawIfUnaligned> Copy for Unaligned<T> { }
+impl<T: LmdbRawIfUnaligned> Copy for Unaligned<T> {}
 
-unsafe impl<T : LmdbRawIfUnaligned> LmdbRaw for Unaligned<T> {
+unsafe impl<T: LmdbRawIfUnaligned> LmdbRaw for Unaligned<T> {
     fn reported_type() -> String {
         format!("Unaligned<{}>", T::reported_type())
     }
 }
 
-unsafe impl<T : LmdbRawIfUnaligned + LmdbOrdKeyIfUnaligned> LmdbOrdKey
-for Unaligned<T> {
-    fn ordered_by_bytes() -> bool { T::ordered_by_bytes() }
-    fn ordered_as_integer() -> bool { T::ordered_as_integer() }
+unsafe impl<T: LmdbRawIfUnaligned + LmdbOrdKeyIfUnaligned> LmdbOrdKey for Unaligned<T> {
+    fn ordered_by_bytes() -> bool {
+        T::ordered_by_bytes()
+    }
+    fn ordered_as_integer() -> bool {
+        T::ordered_as_integer()
+    }
 }
 
-impl<T : LmdbRawIfUnaligned> Unaligned<T> {
+impl<T: LmdbRawIfUnaligned> Unaligned<T> {
     /// Wraps `t` in an `Unaligned` marker.
     pub fn new(t: T) -> Self {
         Unaligned(t)
@@ -86,14 +89,18 @@ impl<T : LmdbRawIfUnaligned> Unaligned<T> {
     ///
     /// This is safe as the compiler has visibility into the fact that the
     /// contained value is misaligned and can copy appropriately.
-    pub fn get(&self) -> T { self.0 }
+    pub fn get(&self) -> T {
+        self.0
+    }
 
     /// Replaces the contained value.
-    pub fn set(&mut self, t: T) { self.0 = t; }
+    pub fn set(&mut self, t: T) {
+        self.0 = t;
+    }
 }
 
 /// Synonym for `Unaligned::of_ref()`.
-pub fn unaligned<T : LmdbRawIfUnaligned>(t: &T) -> &Unaligned<T> {
+pub fn unaligned<T: LmdbRawIfUnaligned>(t: &T) -> &Unaligned<T> {
     Unaligned::of_ref(t)
 }
 
@@ -103,13 +110,16 @@ pub fn unaligned<T : LmdbRawIfUnaligned>(t: &T) -> &Unaligned<T> {
 
 macro_rules! deleg_fmt {
     ($tr:ident) => {
-        impl<T : LmdbRawIfUnaligned> fmt::$tr for Unaligned<T> where T : fmt::$tr {
+        impl<T: LmdbRawIfUnaligned> fmt::$tr for Unaligned<T>
+        where
+            T: fmt::$tr,
+        {
             fn fmt(&self, fmt: &mut fmt::Formatter) -> Result<(), fmt::Error> {
                 let inner = self.0;
                 inner.fmt(fmt)
             }
         }
-    }
+    };
 }
 
 deleg_fmt!(Binary);
@@ -122,16 +132,14 @@ deleg_fmt!(Pointer);
 deleg_fmt!(UpperExp);
 deleg_fmt!(UpperHex);
 
-impl<T : LmdbRawIfUnaligned + cmp::PartialEq<T>>
-cmp::PartialEq<Unaligned<T>> for Unaligned<T> {
+impl<T: LmdbRawIfUnaligned + cmp::PartialEq<T>> cmp::PartialEq<Unaligned<T>> for Unaligned<T> {
     fn eq(&self, other: &Self) -> bool {
         let (lhs, rhs) = (self.0, other.0);
         lhs.eq(&rhs)
     }
 }
-impl<T : LmdbRawIfUnaligned + cmp::Eq> cmp::Eq for Unaligned<T> { }
-impl<T : LmdbRawIfUnaligned + cmp::PartialOrd<T>>
-cmp::PartialOrd<Unaligned<T>> for Unaligned<T> {
+impl<T: LmdbRawIfUnaligned + cmp::Eq> cmp::Eq for Unaligned<T> {}
+impl<T: LmdbRawIfUnaligned + cmp::PartialOrd<T>> cmp::PartialOrd<Unaligned<T>> for Unaligned<T> {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         let (lhs, rhs) = (self.0, other.0);
         lhs.partial_cmp(&rhs)
@@ -153,15 +161,15 @@ cmp::PartialOrd<Unaligned<T>> for Unaligned<T> {
         lhs.ge(&rhs)
     }
 }
-impl<T : LmdbRawIfUnaligned + cmp::Ord> cmp::Ord for Unaligned<T> {
+impl<T: LmdbRawIfUnaligned + cmp::Ord> cmp::Ord for Unaligned<T> {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         let (lhs, rhs) = (self.0, other.0);
         lhs.cmp(&rhs)
     }
 }
 
-impl<T : LmdbRawIfUnaligned + Hash> Hash for Unaligned<T> {
-    fn hash<H : Hasher>(&self, state: &mut H) {
+impl<T: LmdbRawIfUnaligned + Hash> Hash for Unaligned<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         let v = self.0;
         v.hash(state)
     }
@@ -169,29 +177,29 @@ impl<T : LmdbRawIfUnaligned + Hash> Hash for Unaligned<T> {
 
 macro_rules! binop {
     ($tr:ident, $meth:ident) => {
-        impl<T : LmdbRawIfUnaligned + ops::$tr<T>>
-        ops::$tr<Unaligned<T>> for Unaligned<T>
-        where T::Output : LmdbRawIfUnaligned {
+        impl<T: LmdbRawIfUnaligned + ops::$tr<T>> ops::$tr<Unaligned<T>> for Unaligned<T>
+        where
+            T::Output: LmdbRawIfUnaligned,
+        {
             type Output = Unaligned<T::Output>;
             fn $meth(self, rhs: Self) -> Self::Output {
                 let (lhs, rhs) = (self.0, rhs.0);
                 Unaligned(lhs.$meth(rhs))
             }
         }
-    }
+    };
 }
 
 macro_rules! binopeq {
     ($tr:ident, $meth:ident) => {
-        impl<T : LmdbRawIfUnaligned + ops::$tr<T>>
-        ops::$tr<Unaligned<T>> for Unaligned<T> {
+        impl<T: LmdbRawIfUnaligned + ops::$tr<T>> ops::$tr<Unaligned<T>> for Unaligned<T> {
             fn $meth(&mut self, rhs: Self) {
                 let (mut lhs, rhs) = (self.0, rhs.0);
                 lhs.$meth(rhs);
                 self.0 = lhs;
             }
         }
-    }
+    };
 }
 
 binop!(Add, add);

@@ -18,8 +18,8 @@
 //! # Example
 //!
 //! ```
-//! extern crate lmdb_zero as lmdb;
-//! extern crate tempdir;
+//! use ordinary_lmdb as lmdb;
+//! # extern crate tempdir;
 //!
 //! # fn main() {
 //! #   let tmp = tempdir::TempDir::new_in(".", "lmdbzero").unwrap();
@@ -117,7 +117,7 @@
 //! appropriately from the accessor of the transaction owning the cursor.
 //!
 //! If you want to define your own types to store in the database, see the
-//! `lmdb_zero::traits` submodule.
+//! `ordinary_lmdb::traits` submodule.
 //!
 //! # Lifetimes and Ownership
 //!
@@ -217,13 +217,13 @@
 //! the `&str`s returned when querying for items are pointers into the database
 //! itself, valid as long as the accessor is.
 //!
-//! The main traits to look at are `lmdb_zero::traits::AsLmdbBytes` and
-//! `lmdb_zero::traits::FromLmdbBytes`, which are used to cast between byte
+//! The main traits to look at are `ordinary_lmdb::traits::AsLmdbBytes` and
+//! `ordinary_lmdb::traits::FromLmdbBytes`, which are used to cast between byte
 //! arrays and the types to be stored in the database.
-//! `lmdb_zero::traits::FromReservedLmdbBytes` is used if you want to use the
+//! `ordinary_lmdb::traits::FromReservedLmdbBytes` is used if you want to use the
 //! `reserve` methods (in which you write the key only to the database and get
 //! a pointer to a value to fill in after the fact). If you have a
-//! `#[repr(C)]`, `Copy` struct, you can also use `lmdb_zero::traits::LmdbRaw`
+//! `#[repr(C)]`, `Copy` struct, you can also use `ordinary_lmdb::traits::LmdbRaw`
 //! if you just want to shove the raw struct itself into the database. All of
 //! these have caveats which can be found on the struct documentation.
 //!
@@ -271,24 +271,25 @@
 
 #![deny(missing_docs)]
 
-extern crate liblmdb_sys as ffi;
 extern crate libc;
 extern crate supercow;
-#[macro_use] extern crate bitflags;
-#[cfg(test)] extern crate tempdir;
+#[macro_use]
+extern crate bitflags;
+#[cfg(test)]
+extern crate tempdir;
 
 use std::ffi::CStr;
 
-pub use ffi::mdb_mode_t as FileMode;
-pub use ffi::mdb_filehandle_t as Fd;
+pub use liblmdb::mdb_filehandle_t as Fd;
+pub use liblmdb::mdb_mode_t as FileMode;
 
 macro_rules! lmdb_call {
-    ($x:expr) => { {
+    ($x:expr) => {{
         let code = $x;
         if 0 != code {
             return Err($crate::Error::Code(code));
         }
-    } }
+    }};
 }
 
 /// Returns the LMDB version as a string.
@@ -297,8 +298,9 @@ pub fn version_str() -> &'static str {
     let mut minor: libc::c_int = 0;
     let mut rev: libc::c_int = 0;
     unsafe {
-        CStr::from_ptr(ffi::mdb_version(&mut major, &mut minor, &mut rev))
-            .to_str().unwrap_or("(invalid)")
+        CStr::from_ptr(liblmdb::mdb_version(&mut major, &mut minor, &mut rev))
+            .to_str()
+            .unwrap_or("(invalid)")
     }
 }
 
@@ -308,7 +310,7 @@ pub fn version() -> (i32, i32, i32) {
     let mut minor: libc::c_int = 0;
     let mut rev: libc::c_int = 0;
     unsafe {
-        ffi::mdb_version(&mut major, &mut minor, &mut rev);
+        liblmdb::mdb_version(&mut major, &mut minor, &mut rev);
     }
     (major as i32, minor as i32, rev as i32)
 }
@@ -320,30 +322,39 @@ pub fn version() -> (i32, i32, i32) {
 pub struct Ignore;
 
 mod mdb_vals;
-mod ffi2;
-#[cfg(test)] mod test_helpers;
+#[cfg(test)]
+mod test_helpers;
 
 pub mod error;
 pub use error::{Error, LmdbResultExt, Result};
 
 mod env;
-pub use env::{open, copy, EnvBuilder, Environment, Stat, EnvInfo};
+pub use env::{copy, open, EnvBuilder, EnvInfo, Environment, Stat};
 
 mod dbi;
 pub use dbi::{db, Database, DatabaseOptions};
 
 pub mod traits;
 mod unaligned;
-pub use unaligned::{Unaligned, unaligned};
+pub use unaligned::{unaligned, Unaligned};
 
 mod tx;
-pub use tx::{ConstTransaction, ReadTransaction, WriteTransaction};
 pub use tx::ResetTransaction;
+pub use tx::{del, put};
 pub use tx::{ConstAccessor, WriteAccessor};
-pub use tx::{put, del};
+pub use tx::{ConstTransaction, ReadTransaction, WriteTransaction};
 
 mod cursor;
-pub use cursor::{StaleCursor, Cursor};
+pub use cursor::{Cursor, StaleCursor};
 
 mod iter;
 pub use iter::{CursorIter, MaybeOwned};
+
+#[allow(
+    missing_docs,
+    dead_code,
+    non_upper_case_globals,
+    non_snake_case,
+    non_camel_case_types
+)]
+pub mod ffi;

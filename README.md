@@ -42,6 +42,13 @@ is of course possible there are bugs in handling alignment here.
 
 ## Changelog
 
+**0.0.0**: Removes dependency on `liblmdb-sys` (no commits since 2018) in 
+  favor of generating bindings within this project. Adds `liblmdb` submodules
+  which references the GitHub readonly mirror of LMDB. FFI using `cc` and 
+  `bindgen`. Upgrades `bitflags` to 2, `libc` to 0.2.
+
+_Forked by Ordinary Labs, LLC_
+
 **0.4.4**: New `Environment` and `Database` methods to enable interoperating
   with native C/C++ code. `Database::dbi()` renamed to `as_raw()`. The old name
   is still available but deprecated.

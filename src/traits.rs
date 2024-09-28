@@ -24,12 +24,12 @@ use std::sync::Arc;
 
 use supercow::Supercow;
 
-use ::Ignore;
-use cursor::{Cursor, StaleCursor};
-use dbi::Database;
-use tx::{ConstTransaction, ReadTransaction, WriteTransaction};
+use crate::cursor::{Cursor, StaleCursor};
+use crate::dbi::Database;
+use crate::tx::{ConstTransaction, ReadTransaction, WriteTransaction};
+use crate::Ignore;
 
-pub use error::{self, LmdbResultExt};
+pub use crate::error::{self, LmdbResultExt};
 
 /// Extension trait for `Rc` and `Arc` that allows up-casting a reference to
 /// `ReadTransaction` or `WriteTransaction` to `ConstTransaction`.
@@ -50,19 +50,27 @@ impl<'a> TxExt for Rc<ReadTransaction<'a>> {
     // the same memory representation as the thing they wrap. Further, they
     // have no `impl Drop` of their own, so the resulting drop code is exactly
     // equal for both `Rc<ConstTransaction>` and `Rc<ReadTransaction>`.
-    fn to_const(self) -> Self::Const { unsafe { mem::transmute(self) } }
+    fn to_const(self) -> Self::Const {
+        unsafe { mem::transmute(self) }
+    }
 }
 impl<'a> TxExt for Rc<WriteTransaction<'a>> {
     type Const = Rc<ConstTransaction<'a>>;
-    fn to_const(self) -> Self::Const { unsafe { mem::transmute(self) } }
+    fn to_const(self) -> Self::Const {
+        unsafe { mem::transmute(self) }
+    }
 }
 impl<'a> TxExt for Arc<ReadTransaction<'a>> {
     type Const = Arc<ConstTransaction<'a>>;
-    fn to_const(self) -> Self::Const { unsafe { mem::transmute(self) } }
+    fn to_const(self) -> Self::Const {
+        unsafe { mem::transmute(self) }
+    }
 }
 impl<'a> TxExt for Arc<WriteTransaction<'a>> {
     type Const = Arc<ConstTransaction<'a>>;
-    fn to_const(self) -> Self::Const { unsafe { mem::transmute(self) } }
+    fn to_const(self) -> Self::Const {
+        unsafe { mem::transmute(self) }
+    }
 }
 
 /// Types of transaction references which can be used to construct `Cursor`s.
@@ -78,75 +86,78 @@ pub trait CreateCursor<'txn> {
     /// Create a cursor using `self` as the reference to the containing
     /// transaction and `db` as the database the cursor will read from and
     /// write into.
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>>;
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>;
 }
 
 impl<'txn, 'env: 'txn> CreateCursor<'txn> for &'txn ConstTransaction<'env> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
         ConstTransaction::cursor(*self, db)
     }
 }
 
 impl<'txn, 'env: 'txn> CreateCursor<'txn> for &'txn ReadTransaction<'env> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
         ConstTransaction::cursor(*self, db)
     }
 }
 
 impl<'txn, 'env: 'txn> CreateCursor<'txn> for &'txn WriteTransaction<'env> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
         ConstTransaction::cursor(*self, db)
     }
 }
 
 impl<'txn> CreateCursor<'txn> for Rc<ReadTransaction<'static>> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
-        Cursor::construct(Supercow::shared(self.clone().to_const()),
-                          db.into())
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
+        Cursor::construct(Supercow::shared(self.clone().to_const()), db.into())
     }
 }
 
 impl<'txn> CreateCursor<'txn> for Arc<ReadTransaction<'static>> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
-        Cursor::construct(Supercow::shared(self.clone().to_const()),
-                          db.into())
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
+        Cursor::construct(Supercow::shared(self.clone().to_const()), db.into())
     }
 }
 
 impl<'txn> CreateCursor<'txn> for Rc<WriteTransaction<'static>> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
-        Cursor::construct(Supercow::shared(self.clone().to_const()),
-                          db.into())
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
+        Cursor::construct(Supercow::shared(self.clone().to_const()), db.into())
     }
 }
 
 impl<'txn> CreateCursor<'txn> for Arc<WriteTransaction<'static>> {
     #[inline]
-    fn cursor<'db, DB>(&self, db: DB)
-                       -> error::Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
-        Cursor::construct(Supercow::shared(self.clone().to_const()),
-                          db.into())
+    fn cursor<'db, DB>(&self, db: DB) -> error::Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
+        Cursor::construct(Supercow::shared(self.clone().to_const()), db.into())
     }
 }
 
@@ -165,27 +176,23 @@ pub trait AssocCursor<'txn> {
     ///
     /// The cursor will be rebound to this transaction, but will continue using
     /// the same database that it was previously.
-    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>)
-                         -> error::Result<Cursor<'txn,'db>>;
+    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>) -> error::Result<Cursor<'txn, 'db>>;
 }
 
-impl<'txn,'env: 'txn> AssocCursor<'txn> for &'txn ReadTransaction<'env> {
-    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>)
-                         -> error::Result<Cursor<'txn,'db>> {
+impl<'txn, 'env: 'txn> AssocCursor<'txn> for &'txn ReadTransaction<'env> {
+    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>) -> error::Result<Cursor<'txn, 'db>> {
         ReadTransaction::assoc_cursor(*self, cursor)
     }
 }
 
 impl<'txn> AssocCursor<'txn> for Rc<ReadTransaction<'static>> {
-    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>)
-                         -> error::Result<Cursor<'txn,'db>> {
+    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>) -> error::Result<Cursor<'txn, 'db>> {
         Cursor::from_stale(cursor, Supercow::shared(self.clone().to_const()))
     }
 }
 
 impl<'txn> AssocCursor<'txn> for Arc<ReadTransaction<'static>> {
-    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>)
-                         -> error::Result<Cursor<'txn,'db>> {
+    fn assoc_cursor<'db>(&self, cursor: StaleCursor<'db>) -> error::Result<Cursor<'txn, 'db>> {
         Cursor::from_stale(cursor, Supercow::shared(self.clone().to_const()))
     }
 }
@@ -229,7 +236,7 @@ pub trait FromLmdbBytes {
     /// Given a byte slice, return an instance of `Self` described, or
     /// `Err` with an error message if the given byte slice is not an
     /// appropriate value.
-    fn from_lmdb_bytes(&[u8]) -> Result<&Self, String>;
+    fn from_lmdb_bytes(val: &[u8]) -> Result<&Self, String>;
 }
 
 /// Like `FromLmdbBytes`, but can be used with `put_reserve()` calls.
@@ -246,7 +253,7 @@ pub trait FromReservedLmdbBytes {
     ///
     /// This function is allowed to blindly assume that the byte slice is
     /// an appropriate size.
-    unsafe fn from_reserved_lmdb_bytes(&mut [u8]) -> &mut Self;
+    unsafe fn from_reserved_lmdb_bytes(val: &mut [u8]) -> &mut Self;
 }
 
 /// Marker trait indicating a value is to be stored in LMDB by simply
@@ -278,7 +285,7 @@ pub trait FromReservedLmdbBytes {
 /// ### Use `Unaligned`
 ///
 /// Instead of directly reading and writing the bare type, wrap it in
-/// `lmdb_zero::Unaligned`. This adds no overhead in and of itself and removes
+/// `ordinary_lmdb::Unaligned`. This adds no overhead in and of itself and removes
 /// the alignment restriction, but heavily restricts what can be done with a
 /// reference without copying it.
 ///
@@ -355,7 +362,7 @@ pub trait FromReservedLmdbBytes {
 /// ## Example
 ///
 /// ```
-/// use lmdb_zero::traits::*;
+/// use ordinary_lmdb::traits::*;
 ///
 /// #[repr(C)]
 /// #[derive(Clone,Copy,Debug)]
@@ -367,7 +374,7 @@ pub trait FromReservedLmdbBytes {
 /// }
 /// unsafe impl LmdbRaw for MyStruct { }
 /// ```
-pub unsafe trait LmdbRaw : Copy + Sized {
+pub unsafe trait LmdbRaw: Copy + Sized {
     /// Returns the name of this type to report in error messages.
     ///
     /// If not implemented, defaults to `"?"`.
@@ -392,7 +399,7 @@ pub unsafe trait LmdbRaw : Copy + Sized {
 /// usefully interact with `LmdbRaw`, that approach was chosen.
 ///
 /// All `LmdbRaw` types are `LmdbRawIfUnaligned`.
-pub unsafe trait LmdbRawIfUnaligned : Copy + Sized {
+pub unsafe trait LmdbRawIfUnaligned: Copy + Sized {
     /// Returns the name of this type to report in error messages.
     ///
     /// If not implemented, defaults to `"?"`.
@@ -401,7 +408,7 @@ pub unsafe trait LmdbRawIfUnaligned : Copy + Sized {
     }
 }
 
-unsafe impl<T : LmdbRaw> LmdbRawIfUnaligned for T {
+unsafe impl<T: LmdbRaw> LmdbRawIfUnaligned for T {
     fn reported_type() -> String {
         <T as LmdbRaw>::reported_type()
     }
@@ -414,7 +421,7 @@ unsafe impl<T : LmdbRaw> LmdbRawIfUnaligned for T {
 ///
 /// Behaviour is undefined if the `FromLmdbBytes` or `Ord` implementations
 /// panic.
-pub unsafe trait LmdbOrdKey : FromLmdbBytes + Ord {
+pub unsafe trait LmdbOrdKey: FromLmdbBytes + Ord {
     /// Returns whether the default LMDB byte-by-byte comparison is correct for
     /// valid values of this type.
     ///
@@ -434,14 +441,16 @@ pub unsafe trait LmdbOrdKey : FromLmdbBytes + Ord {
     ///
     /// ## Example
     /// ```
-    /// # use lmdb_zero::traits::LmdbOrdKey;
+    /// # use ordinary_lmdb::traits::LmdbOrdKey;
     /// assert!(<u8 as LmdbOrdKey>::ordered_by_bytes());
     /// assert!(!<i8 as LmdbOrdKey>::ordered_by_bytes());
     /// assert!(<str as LmdbOrdKey>::ordered_by_bytes());
     /// assert!(<[u8] as LmdbOrdKey>::ordered_by_bytes());
     /// assert!(!<[i8] as LmdbOrdKey>::ordered_by_bytes());
     /// ```
-    fn ordered_by_bytes() -> bool { false }
+    fn ordered_by_bytes() -> bool {
+        false
+    }
 
     /// Returns whether LMDB will correctly handle this value with the
     /// `INTEGERKEY` or `INTEGERDUP` flags.
@@ -450,7 +459,9 @@ pub unsafe trait LmdbOrdKey : FromLmdbBytes + Ord {
     /// values where this is true instead of using the appropriate flags. This
     /// function exists to support generic code which wants to make such
     /// decisions automatically.
-    fn ordered_as_integer() -> bool { false }
+    fn ordered_as_integer() -> bool {
+        false
+    }
 }
 
 /// Marker trait for types where `Unaligned<T>` is `LmdbOrdKey`.
@@ -461,14 +472,18 @@ pub unsafe trait LmdbOrdKey : FromLmdbBytes + Ord {
 ///
 /// Behaviour is undefined if the `FromLmdbBytes` or `Ord` implementations
 /// panic.
-pub unsafe trait LmdbOrdKeyIfUnaligned : LmdbRawIfUnaligned + Ord {
+pub unsafe trait LmdbOrdKeyIfUnaligned: LmdbRawIfUnaligned + Ord {
     /// Like `LmdbOrdKey::ordered_by_bytes()`
-    fn ordered_by_bytes() -> bool { false }
+    fn ordered_by_bytes() -> bool {
+        false
+    }
     /// Like `LmdbOrdKey::ordered_as_integer()`
-    fn ordered_as_integer() -> bool { false }
+    fn ordered_as_integer() -> bool {
+        false
+    }
 }
 
-unsafe impl<T : LmdbRaw + LmdbOrdKey> LmdbOrdKeyIfUnaligned for T {
+unsafe impl<T: LmdbRaw + LmdbOrdKey> LmdbOrdKeyIfUnaligned for T {
     fn ordered_by_bytes() -> bool {
         <T as LmdbOrdKey>::ordered_by_bytes()
     }
@@ -488,9 +503,7 @@ macro_rules! raw {
         impl AsLmdbBytes for $typ {
             fn as_lmdb_bytes(&self) -> &[u8] {
                 unsafe {
-                    slice::from_raw_parts(
-                        self as *const $typ as *const u8,
-                        mem::size_of::<$typ>())
+                    slice::from_raw_parts(self as *const $typ as *const u8, mem::size_of::<$typ>())
                 }
             }
         }
@@ -499,7 +512,8 @@ macro_rules! raw {
                 unsafe {
                     slice::from_raw_parts(
                         self.as_ptr() as *const u8,
-                        self.len() * mem::size_of::<$typ>())
+                        self.len() * mem::size_of::<$typ>(),
+                    )
                 }
             }
         }
@@ -507,13 +521,15 @@ macro_rules! raw {
 
     ($typ:ident, Ord) => {
         raw!($typ);
-        unsafe impl LmdbOrdKeyIfUnaligned for $typ { }
+        unsafe impl LmdbOrdKeyIfUnaligned for $typ {}
     };
 
     ($typ:ident, Int) => {
         raw!($typ);
         unsafe impl LmdbOrdKeyIfUnaligned for $typ {
-            fn ordered_as_integer() -> bool { true }
+            fn ordered_as_integer() -> bool {
+                true
+            }
         }
     };
 }
@@ -524,14 +540,16 @@ unsafe impl LmdbRaw for u8 {
     }
 }
 unsafe impl LmdbOrdKey for u8 {
-    fn ordered_by_bytes() -> bool { true }
+    fn ordered_by_bytes() -> bool {
+        true
+    }
 }
 unsafe impl LmdbRaw for i8 {
     fn reported_type() -> String {
         "i8".to_owned()
     }
 }
-unsafe impl LmdbOrdKey for i8 { }
+unsafe impl LmdbOrdKey for i8 {}
 raw!(u16, Ord);
 raw!(i16, Ord);
 raw!(u32, Int);
@@ -543,15 +561,17 @@ raw!(f64);
 
 macro_rules! raw_array {
     ($n:expr) => {
-        unsafe impl<V : LmdbRaw> LmdbRaw for [V;$n] {
+        unsafe impl<V: LmdbRaw> LmdbRaw for [V; $n] {
             fn reported_type() -> String {
                 format!("[{};{}]", V::reported_type(), $n)
             }
         }
-        unsafe impl<V : LmdbOrdKey + LmdbRaw> LmdbOrdKey for [V;$n] {
-            fn ordered_by_bytes() -> bool { V::ordered_by_bytes() }
+        unsafe impl<V: LmdbOrdKey + LmdbRaw> LmdbOrdKey for [V; $n] {
+            fn ordered_by_bytes() -> bool {
+                V::ordered_by_bytes()
+            }
         }
-    }
+    };
 }
 raw_array!(0);
 raw_array!(1);
@@ -593,17 +613,16 @@ unsafe impl<V: LmdbRawIfUnaligned> LmdbRawIfUnaligned for Wrapping<V> {
     }
 }
 unsafe impl<V: LmdbOrdKeyIfUnaligned> LmdbOrdKeyIfUnaligned for Wrapping<V> {
-    fn ordered_by_bytes() -> bool { V::ordered_by_bytes() }
+    fn ordered_by_bytes() -> bool {
+        V::ordered_by_bytes()
+    }
 }
 
-unsafe impl LmdbRaw for () { }
+unsafe impl LmdbRaw for () {}
 
-impl<V : LmdbRaw> AsLmdbBytes for V {
+impl<V: LmdbRaw> AsLmdbBytes for V {
     fn as_lmdb_bytes(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(
-                self as *const V as *const u8, mem::size_of::<V>())
-        }
+        unsafe { slice::from_raw_parts(self as *const V as *const u8, mem::size_of::<V>()) }
     }
 }
 
@@ -613,88 +632,98 @@ impl<V: LmdbRaw> FromLmdbBytes for V {
         let align = mem::align_of::<V>();
 
         if bytes.len() != size {
-            return Err(
-                format!("Type {} is size {}, but byte array has size {}",
-                        V::reported_type(), size, bytes.len()));
+            return Err(format!(
+                "Type {} is size {}, but byte array has size {}",
+                V::reported_type(),
+                size,
+                bytes.len()
+            ));
         }
 
         let misalign = (bytes.as_ptr() as usize) % align;
         if 0 != misalign {
-            return Err(
-                format!("Type {} requires alignment {}, but byte array \
+            return Err(format!(
+                "Type {} requires alignment {}, but byte array \
                          at {:08x} is misaligned by {} bytes \
                          (see https://docs.rs/lmdb-zero/{}/\
-                         lmdb_zero/traits/trait.LmdbRaw.html#alignment)",
-                        V::reported_type(), align,
-                        (bytes.as_ptr() as usize), misalign,
-                        env!("CARGO_PKG_VERSION")));
+                         ordinary_lmdb/traits/trait.LmdbRaw.html#alignment)",
+                V::reported_type(),
+                align,
+                (bytes.as_ptr() as usize),
+                misalign,
+                env!("CARGO_PKG_VERSION")
+            ));
         }
 
-        Ok(unsafe {
-            mem::transmute(bytes.as_ptr())
-        })
+        Ok(unsafe { mem::transmute(bytes.as_ptr()) })
     }
 }
 
-impl<V : LmdbRaw> FromReservedLmdbBytes for V {
+impl<V: LmdbRaw> FromReservedLmdbBytes for V {
     unsafe fn from_reserved_lmdb_bytes(bytes: &mut [u8]) -> &mut Self {
         mem::transmute(bytes.as_ptr())
     }
 }
 
-impl<V : LmdbRaw> AsLmdbBytes for [V] {
+impl<V: LmdbRaw> AsLmdbBytes for [V] {
     fn as_lmdb_bytes(&self) -> &[u8] {
         unsafe {
-            slice::from_raw_parts(
-                self.as_ptr() as *const u8,
-                self.len() * mem::size_of::<V>())
+            slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * mem::size_of::<V>())
         }
     }
 }
 
-impl<V : LmdbRaw> FromLmdbBytes for [V] {
+impl<V: LmdbRaw> FromLmdbBytes for [V] {
     fn from_lmdb_bytes(bytes: &[u8]) -> Result<&Self, String> {
         let size = mem::size_of::<V>();
         let align = mem::align_of::<V>();
 
         let size_mod = bytes.len() % size;
         if 0 != size_mod {
-            return Err(
-                format!("Type [{}] must have a size which is a multiple \
+            return Err(format!(
+                "Type [{}] must have a size which is a multiple \
                          of {}, but byte array has size {} ({} trailing bytes)",
-                        V::reported_type(), size, bytes.len(), size_mod));
+                V::reported_type(),
+                size,
+                bytes.len(),
+                size_mod
+            ));
         }
 
         let misalign = (bytes.as_ptr() as usize) % align;
         if 0 != misalign {
-            return Err(
-                format!("Type [{}] requires alignment {}, but byte array \
+            return Err(format!(
+                "Type [{}] requires alignment {}, but byte array \
                          at {:08x} is misaligned by {} bytes \
                          (see https://docs.rs/lmdb-zero/{}/\
-                         lmdb_zero/traits/trait.LmdbRaw.html#alignment)",
-                        V::reported_type(), align,
-                        (bytes.as_ptr() as usize), misalign,
-                        env!("CARGO_PKG_VERSION")));
+                         ordinary_lmdb/traits/trait.LmdbRaw.html#alignment)",
+                V::reported_type(),
+                align,
+                (bytes.as_ptr() as usize),
+                misalign,
+                env!("CARGO_PKG_VERSION")
+            ));
         }
 
         unsafe {
             Ok(slice::from_raw_parts(
                 bytes.as_ptr() as *const V,
-                bytes.len() / size))
+                bytes.len() / size,
+            ))
         }
     }
 }
 
-impl<V : LmdbRaw> FromReservedLmdbBytes for [V] {
+impl<V: LmdbRaw> FromReservedLmdbBytes for [V] {
     unsafe fn from_reserved_lmdb_bytes(bytes: &mut [u8]) -> &mut Self {
-        slice::from_raw_parts_mut(
-            bytes.as_ptr() as *mut V,
-            bytes.len() / mem::size_of::<V>())
+        slice::from_raw_parts_mut(bytes.as_ptr() as *mut V, bytes.len() / mem::size_of::<V>())
     }
 }
 
-unsafe impl<V : LmdbOrdKey + LmdbRaw> LmdbOrdKey for [V] {
-    fn ordered_by_bytes() -> bool { V::ordered_by_bytes() }
+unsafe impl<V: LmdbOrdKey + LmdbRaw> LmdbOrdKey for [V] {
+    fn ordered_by_bytes() -> bool {
+        V::ordered_by_bytes()
+    }
 }
 
 impl AsLmdbBytes for CStr {
@@ -708,13 +737,14 @@ impl FromLmdbBytes for CStr {
     /// Directly converts the byte slice into a `CStr`, including a
     /// required trailing NUL.
     fn from_lmdb_bytes(bytes: &[u8]) -> Result<&Self, String> {
-        CStr::from_bytes_with_nul(bytes).map_err(
-            |_| "NUL byte in CString value".to_owned())
+        CStr::from_bytes_with_nul(bytes).map_err(|_| "NUL byte in CString value".to_owned())
     }
 }
 
 unsafe impl LmdbOrdKey for CStr {
-    fn ordered_by_bytes() -> bool { true }
+    fn ordered_by_bytes() -> bool {
+        true
+    }
 }
 
 impl AsLmdbBytes for str {
@@ -725,16 +755,17 @@ impl AsLmdbBytes for str {
 
 impl FromLmdbBytes for str {
     fn from_lmdb_bytes(bytes: &[u8]) -> Result<&str, String> {
-        str::from_utf8(bytes).map_err(
-            |_| "String is not valid UTF-8".to_owned())
+        str::from_utf8(bytes).map_err(|_| "String is not valid UTF-8".to_owned())
     }
 }
 
 unsafe impl LmdbOrdKey for str {
-    fn ordered_by_bytes() -> bool { true }
+    fn ordered_by_bytes() -> bool {
+        true
+    }
 }
 
-impl<V : LmdbRaw> AsLmdbBytes for Vec<V> {
+impl<V: LmdbRaw> AsLmdbBytes for Vec<V> {
     fn as_lmdb_bytes(&self) -> &[u8] {
         &self[..].as_lmdb_bytes()
     }
@@ -750,11 +781,7 @@ impl FromLmdbBytes for Ignore {
 
 impl AsLmdbBytes for char {
     fn as_lmdb_bytes(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(
-                self as *const char as *const u8,
-                mem::size_of::<char>())
-        }
+        unsafe { slice::from_raw_parts(self as *const char as *const u8, mem::size_of::<char>()) }
     }
 }
 
@@ -763,7 +790,8 @@ impl AsLmdbBytes for [char] {
         unsafe {
             slice::from_raw_parts(
                 self.as_ptr() as *const u8,
-                self.len() * mem::size_of::<char>())
+                self.len() * mem::size_of::<char>(),
+            )
         }
     }
 }

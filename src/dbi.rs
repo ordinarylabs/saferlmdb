@@ -7,29 +7,28 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use libc::c_int;
 use std::cmp::{Ord, Ordering};
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
-use libc::c_int;
 
-use ffi;
+use liblmdb;
 use supercow::Supercow;
 
-use env::{self, Environment};
-use error::{Error, Result};
-use mdb_vals::*;
-use traits::*;
-use tx::TxHandle;
+use crate::env::{self, Environment};
+use crate::error::{Error, Result};
+use crate::mdb_vals::*;
+use crate::traits::*;
+use crate::tx::TxHandle;
 
 /// Flags used when opening databases.
 pub mod db {
-    use ffi;
-    use libc;
+    use liblmdb;
 
     bitflags! {
         /// Flags used when opening databases.
-        pub struct Flags : libc::c_uint {
+        pub struct Flags: u32 {
             /// Keys are strings to be compared in reverse order, from the end
             /// of the strings to the beginning. By default, Keys are treated
             /// as strings and compared from beginning to end.
@@ -45,14 +44,14 @@ pub mod db {
             /// # let env = create_env();
             /// let db = lmdb::Database::open(
             ///   &env, Some("reversed"), &lmdb::DatabaseOptions::new(
-            ///     lmdb::db::REVERSEKEY | lmdb::db::CREATE)).unwrap();
+            ///     lmdb::db::Flags::REVERSEKEY | lmdb::db::Flags::CREATE)).unwrap();
             /// let txn = lmdb::WriteTransaction::new(&env).unwrap();
             /// {
             ///   let mut access = txn.access();
             ///   let f = lmdb::put::Flags::empty();
-            ///   access.put(&db, "Germany", "Berlin", f).unwrap();
-            ///   access.put(&db, "Latvia", "Rīga", f).unwrap();
-            ///   access.put(&db, "France", "Paris", f).unwrap();
+            ///   access.put(&db, "Germany", "Berlin", f.clone()).unwrap();
+            ///   access.put(&db, "Latvia", "Rīga", f.clone()).unwrap();
+            ///   access.put(&db, "France", "Paris", f.clone()).unwrap();
             ///
             ///   let mut cursor = txn.cursor(&db).unwrap();
             ///   // The keys are compared as if we had input "aivtaL", "ecnarF",
@@ -64,7 +63,7 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const REVERSEKEY = ffi::MDB_REVERSEKEY;
+            const REVERSEKEY = liblmdb::MDB_REVERSEKEY;
             /// Duplicate keys may be used in the database. (Or, from another
             /// perspective, keys may have multiple data items, stored in
             /// sorted order.) By default keys must be unique and may have only
@@ -77,14 +76,14 @@ pub mod db {
             /// # let env = create_env();
             /// let db = lmdb::Database::open(
             ///   &env, Some("example"), &lmdb::DatabaseOptions::new(
-            ///     lmdb::db::DUPSORT | lmdb::db::CREATE)).unwrap();
+            ///     lmdb::db::Flags::DUPSORT | lmdb::db::Flags::CREATE)).unwrap();
             /// let txn = lmdb::WriteTransaction::new(&env).unwrap();
             /// {
             ///   let mut access = txn.access();
             ///   let f = lmdb::put::Flags::empty();
-            ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-            ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-            ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+            ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+            ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+            ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
             ///
             ///   let mut cursor = txn.cursor(&db).unwrap();
             ///   assert_eq!(("Fruit", "Apple"),
@@ -95,7 +94,7 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const DUPSORT = ffi::MDB_DUPSORT;
+            const DUPSORT = liblmdb::MDB_DUPSORT;
             /// Keys are binary integers in native byte order, either
             /// `libc::c_uint` or `libc::size_t`, and will be sorted as such.
             /// The keys must all be of the same size.
@@ -110,7 +109,7 @@ pub mod db {
             ///
             /// let db = lmdb::Database::open(
             ///   &env, Some("reversed"), &lmdb::DatabaseOptions::new(
-            ///     lmdb::db::INTEGERKEY | lmdb::db::CREATE)).unwrap();
+            ///     lmdb::db::Flags::INTEGERKEY | lmdb::db::Flags::CREATE)).unwrap();
             /// let txn = lmdb::WriteTransaction::new(&env).unwrap();
             /// {
             ///   let mut access = txn.access();
@@ -119,9 +118,9 @@ pub mod db {
             ///   // Note that on little-endian systems this means a
             ///   // byte-by-byte comparison would not order the keys the way
             ///   // one might expect.
-            ///   access.put(&db, &42u32, "Fourty-two", f).unwrap();
-            ///   access.put(&db, &65536u32, "65'536", f).unwrap();
-            ///   access.put(&db, &0u32, "Zero", f).unwrap();
+            ///   access.put(&db, &42u32, "Fourty-two", f.clone()).unwrap();
+            ///   access.put(&db, &65536u32, "65'536", f.clone()).unwrap();
+            ///   access.put(&db, &0u32, "Zero", f.clone()).unwrap();
             ///
             ///   let mut cursor = txn.cursor(&db).unwrap();
             ///   // But because we used `INTEGERKEY`, they are in fact sorted
@@ -133,7 +132,7 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const INTEGERKEY = ffi::MDB_INTEGERKEY;
+            const INTEGERKEY = liblmdb::MDB_INTEGERKEY;
             /// This flag may only be used in combination with `DUPSORT`. This
             /// option tells the library that the data items for this database
             /// are all the same size, which allows further optimizations in
@@ -158,8 +157,8 @@ pub mod db {
             ///
             /// let db = lmdb::Database::open(
             ///   &env, Some("reversed"), &lmdb::DatabaseOptions::new(
-            ///     lmdb::db::DUPSORT | lmdb::db::DUPFIXED |
-            ///     lmdb::db::INTEGERDUP | lmdb::db::CREATE))
+            ///     lmdb::db::Flags::DUPSORT | lmdb::db::Flags::DUPFIXED |
+            ///     lmdb::db::Flags::INTEGERDUP | lmdb::db::Flags::CREATE))
             ///   .unwrap();
             /// let txn = lmdb::WriteTransaction::new(&env).unwrap();
             /// {
@@ -168,7 +167,7 @@ pub mod db {
             ///   // Map strings to their constituent chars
             ///   for s in &["foo", "bar", "xyzzy"] {
             ///     for c in s.chars() {
-            ///       access.put(&db, *s, &c, f).unwrap();
+            ///       access.put(&db, *s, &c, f.clone()).unwrap();
             ///     }
             ///   }
             ///
@@ -208,10 +207,10 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const DUPFIXED = ffi::MDB_DUPFIXED;
+            const DUPFIXED = liblmdb::MDB_DUPFIXED;
             /// This option specifies that duplicate data items are binary
             /// integers, similar to `INTEGERKEY` keys.
-            const INTEGERDUP = ffi::MDB_INTEGERDUP;
+            const INTEGERDUP = liblmdb::MDB_INTEGERDUP;
             /// This option specifies that duplicate data items should be
             /// compared as strings in reverse order.
             ///
@@ -226,15 +225,15 @@ pub mod db {
             /// # let env = create_env();
             /// let db = lmdb::Database::open(
             ///   &env, Some("reversed"), &lmdb::DatabaseOptions::new(
-            ///     lmdb::db::DUPSORT | lmdb::db::REVERSEDUP |
-            ///     lmdb::db::CREATE)).unwrap();
+            ///     lmdb::db::Flags::DUPSORT | lmdb::db::Flags::REVERSEDUP |
+            ///     lmdb::db::Flags::CREATE)).unwrap();
             /// let txn = lmdb::WriteTransaction::new(&env).unwrap();
             /// {
             ///   let mut access = txn.access();
             ///   let f = lmdb::put::Flags::empty();
-            ///   access.put(&db, "Colorado", "Denver", f).unwrap();
-            ///   access.put(&db, "Colorado", "Golden", f).unwrap();
-            ///   access.put(&db, "Colorado", "Lakewood", f).unwrap();
+            ///   access.put(&db, "Colorado", "Denver", f.clone()).unwrap();
+            ///   access.put(&db, "Colorado", "Golden", f.clone()).unwrap();
+            ///   access.put(&db, "Colorado", "Lakewood", f.clone()).unwrap();
             ///
             ///   let mut cursor = txn.cursor(&db).unwrap();
             ///   // doowekaL, nedloG, revneD
@@ -245,10 +244,10 @@ pub mod db {
             /// txn.commit().unwrap();
             /// # }
             /// ```
-            const REVERSEDUP = ffi::MDB_REVERSEDUP;
+            const REVERSEDUP = liblmdb::MDB_REVERSEDUP;
             /// Create the named database if it doesn't exist. This option is
             /// not allowed in a read-only environment.
-            const CREATE = ffi::MDB_CREATE;
+            const CREATE = liblmdb::MDB_CREATE;
         }
     }
 }
@@ -256,7 +255,7 @@ pub mod db {
 #[derive(Debug)]
 struct DbHandle<'a> {
     env: Supercow<'a, Environment>,
-    dbi: ffi::MDB_dbi,
+    dbi: liblmdb::MDB_dbi,
     close_on_drop: bool,
 }
 
@@ -287,9 +286,9 @@ impl<'a> Drop for DbHandle<'a> {
 /// `'a` is covariant: given two lifetimes `'x` and `'y` where `'x: 'y`, a
 /// `&Database<'x>` will implicitly coerce to `&Database<'y>`.
 ///
-/// ```rust,norun
+/// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # extern crate lmdb_zero as lmdb;
+/// # use ordinary_lmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &lmdb::Database<'x>)
@@ -396,12 +395,11 @@ pub struct Database<'a> {
 }
 
 /// Describes the options used for creating or opening a database.
-#[derive(Clone,Debug)]
 pub struct DatabaseOptions {
     /// The integer flags to pass to LMDB
     pub flags: db::Flags,
-    key_cmp: Option<ffi::MDB_cmp_func>,
-    val_cmp: Option<ffi::MDB_cmp_func>,
+    key_cmp: Option<liblmdb::MDB_cmp_func>,
+    val_cmp: Option<liblmdb::MDB_cmp_func>,
 }
 
 impl DatabaseOptions {
@@ -458,17 +456,17 @@ impl DatabaseOptions {
     ///
     /// # fn main() {
     /// # let env = create_env();
-    /// let mut opts = lmdb::DatabaseOptions::new(lmdb::db::CREATE);
+    /// let mut opts = lmdb::DatabaseOptions::new(lmdb::db::Flags::CREATE);
     /// opts.sort_keys_as::<MyStruct>();
     /// let db = lmdb::Database::open(&env, Some("example"), &opts).unwrap();
     /// let txn = lmdb::WriteTransaction::new(&env).unwrap();
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, &my(0, 0), "origin", f).unwrap();
-    ///   access.put(&db, &my(-1, 0), "x=-1", f).unwrap();
-    ///   access.put(&db, &my(1, 0), "x=+1", f).unwrap();
-    ///   access.put(&db, &my(0, -1), "y=-1", f).unwrap();
+    ///   access.put(&db, &my(0, 0), "origin", f.clone()).unwrap();
+    ///   access.put(&db, &my(-1, 0), "x=-1", f.clone()).unwrap();
+    ///   access.put(&db, &my(1, 0), "x=+1", f.clone()).unwrap();
+    ///   access.put(&db, &my(0, -1), "y=-1", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   // The keys are sorted by the Rust-derived comparison. The default
@@ -481,8 +479,8 @@ impl DatabaseOptions {
     /// }
     /// txn.commit().unwrap();
     /// # }
-    pub fn sort_keys_as<K : LmdbOrdKey + ?Sized>(&mut self) {
-        self.key_cmp = Some(DatabaseOptions::entry_cmp_as::<K>);
+    pub fn sort_keys_as<K: LmdbOrdKey + ?Sized>(&mut self) {
+        self.key_cmp = Some(Some(DatabaseOptions::entry_cmp_as::<K>));
     }
 
     /// Sorts duplicate values in the database by interpreting them as `V` and
@@ -503,8 +501,8 @@ impl DatabaseOptions {
     /// otherwise data corruption may occur. The same comparison function must
     /// be used by every program accessing the database, every time the
     /// database is used.
-    pub fn sort_values_as<V : LmdbOrdKey + ?Sized>(&mut self) {
-        self.val_cmp = Some(DatabaseOptions::entry_cmp_as::<V>);
+    pub fn sort_values_as<V: LmdbOrdKey + ?Sized>(&mut self) {
+        self.val_cmp = Some(Some(DatabaseOptions::entry_cmp_as::<V>));
     }
 
     /// Concisely creates a `DatabaseOptions` to configure a database to have a
@@ -514,10 +512,10 @@ impl DatabaseOptions {
     /// an integer, `db::INTEGERKEY` is set. Otherwise, unless `K` sorts
     /// properly via byte-string comparison, `sort_keys_as` is called to
     /// configure the database to use `K`'s `Ord` implementation.
-    pub fn create_map<K : LmdbOrdKey + ?Sized>() -> Self {
-        let mut this = DatabaseOptions::new(db::CREATE);
+    pub fn create_map<K: LmdbOrdKey + ?Sized>() -> Self {
+        let mut this = DatabaseOptions::new(db::Flags::CREATE);
         if K::ordered_as_integer() {
-            this.flags |= db::INTEGERKEY;
+            this.flags |= db::Flags::INTEGERKEY;
         } else if !K::ordered_by_bytes() {
             this.sort_keys_as::<K>();
         }
@@ -532,14 +530,11 @@ impl DatabaseOptions {
     /// `INTEGERDUP` is set. Otherwise, if `V` is not byte-string comparable,
     /// `sort_values_as` is used to order values by `V`'s `Ord`
     /// implementation.
-    pub fn create_multimap_unsized<K : LmdbOrdKey + ?Sized,
-                                   V : LmdbOrdKey + ?Sized>
-        () -> Self
-    {
+    pub fn create_multimap_unsized<K: LmdbOrdKey + ?Sized, V: LmdbOrdKey + ?Sized>() -> Self {
         let mut this = DatabaseOptions::create_map::<K>();
-        this.flags |= db::DUPSORT;
+        this.flags |= db::Flags::DUPSORT;
         if V::ordered_as_integer() {
-            this.flags |= db::INTEGERDUP;
+            this.flags |= db::Flags::INTEGERDUP;
         } else if !V::ordered_by_bytes() {
             this.sort_values_as::<V>();
         }
@@ -551,21 +546,19 @@ impl DatabaseOptions {
     ///
     /// This is the same as `create_multimap_unsized`, except that `DUPFIXED`
     /// is additionally set unconditionally.
-    pub fn create_multimap<K : LmdbOrdKey + ?Sized,
-                           V : LmdbOrdKey + Sized>
-        () -> Self
-    {
+    pub fn create_multimap<K: LmdbOrdKey + ?Sized, V: LmdbOrdKey + Sized>() -> Self {
         let mut this = DatabaseOptions::create_multimap_unsized::<K, V>();
-        this.flags |= db::DUPFIXED;
+        this.flags |= db::Flags::DUPFIXED;
         this
     }
 
-    extern fn entry_cmp_as<V : LmdbOrdKey + ?Sized>(
-        ap: *const ffi::MDB_val, bp: *const ffi::MDB_val) -> c_int
-    {
+    extern "C" fn entry_cmp_as<V: LmdbOrdKey + ?Sized>(
+        ap: *const liblmdb::MDB_val,
+        bp: *const liblmdb::MDB_val,
+    ) -> c_int {
         match unsafe {
-            V::from_lmdb_bytes(mdb_val_as_bytes(&ap, &*ap)).cmp(
-                &V::from_lmdb_bytes(mdb_val_as_bytes(&bp, &*bp)))
+            V::from_lmdb_bytes(mdb_val_as_bytes(&ap, &*ap))
+                .cmp(&V::from_lmdb_bytes(mdb_val_as_bytes(&bp, &*bp)))
         } {
             Ordering::Less => -1,
             Ordering::Equal => 0,
@@ -632,7 +625,7 @@ impl<'a> Database<'a> {
     /// {
     ///   let db = lmdb::Database::open(
     ///     &env, Some("example-db"), &lmdb::DatabaseOptions::new(
-    ///       lmdb::db::CREATE)).unwrap();
+    ///       lmdb::db::Flags::CREATE)).unwrap();
     ///   // Do stuff with `db`
     /// } // The `db` handle is released
     /// # }
@@ -677,7 +670,7 @@ impl<'a> Database<'a> {
     /// #   builder.set_maxdbs(2).unwrap();
     /// #   unsafe { builder.open(
     /// #     tdir.path().to_str().unwrap(),
-    /// #     lmdb::open::RDONLY, 0o400).unwrap() }
+    /// #     lmdb::open::Flags::RDONLY, 0o400).unwrap() }
     /// # };
     /// {
     ///   // Succeeds -- The DB already exists
@@ -687,52 +680,60 @@ impl<'a> Database<'a> {
     ///   // Fails -- Can't create a new one in read-only mode
     ///   assert!(lmdb::Database::open(
     ///     &env, Some("name"),
-    ///     &lmdb::DatabaseOptions::new(lmdb::db::CREATE)).is_err());
+    ///     &lmdb::DatabaseOptions::new(lmdb::db::Flags::CREATE)).is_err());
     /// }
     /// # }
     /// ```
-    pub fn open<E>(env: E, name: Option<&str>,
-                   options: &DatabaseOptions)
-                   -> Result<Database<'a>>
-    where E : Into<Supercow<'a, Environment>> {
+    pub fn open<E>(env: E, name: Option<&str>, options: &DatabaseOptions) -> Result<Database<'a>>
+    where
+        E: Into<Supercow<'a, Environment>>,
+    {
         let env: Supercow<'a, Environment> = env.into();
 
-        let mut raw: ffi::MDB_dbi = 0;
+        let mut raw: liblmdb::MDB_dbi = 0;
         let name_cstr = match name {
             None => None,
-            Some(s) => Some(try!(CString::new(s))),
+            Some(s) => Some(CString::new(s)?),
         };
         let raw = unsafe {
-            use env;
+            use crate::env;
             // Locking the hash set here is also used to serialise calls to
             // `mdb_dbi_open()`, which are not permitted to be concurrent.
-            let mut locked_dbis = env::env_open_dbis(&env).lock()
+            let mut locked_dbis = env::env_open_dbis(&env)
+                .lock()
                 .expect("open_dbis lock poisoned");
 
-            let mut raw_tx: *mut ffi::MDB_txn = ptr::null_mut();
+            let mut raw_tx: *mut liblmdb::MDB_txn = ptr::null_mut();
             let mut txn_flags = 0;
-            if env.flags().unwrap().contains(env::open::RDONLY) {
-                txn_flags = ffi::MDB_RDONLY;
+            if env.flags().unwrap().contains(env::open::Flags::RDONLY) {
+                txn_flags = liblmdb::MDB_RDONLY;
             }
-            lmdb_call!(ffi::mdb_txn_begin(
-                env::env_ptr(&env), ptr::null_mut(), txn_flags, &mut raw_tx));
+            lmdb_call!(liblmdb::mdb_txn_begin(
+                env::env_ptr(&env),
+                ptr::null_mut(),
+                txn_flags,
+                &mut raw_tx
+            ));
             let mut wrapped_tx = TxHandle(raw_tx); // For auto-closing etc
-            lmdb_call!(ffi::mdb_dbi_open(
-                raw_tx, name_cstr.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
-                options.flags.bits(), &mut raw));
+            lmdb_call!(liblmdb::mdb_dbi_open(
+                raw_tx,
+                name_cstr.as_ref().map_or(ptr::null(), |s| s.as_ptr()),
+                options.flags.bits(),
+                &mut raw
+            ));
 
             if !locked_dbis.insert(raw) {
-                return Err(Error::Reopened)
+                return Err(Error::Reopened);
             }
 
             if let Some(fun) = options.key_cmp {
-                lmdb_call!(ffi::mdb_set_compare(raw_tx, raw, fun));
+                lmdb_call!(liblmdb::mdb_set_compare(raw_tx, raw, fun));
             }
             if let Some(fun) = options.val_cmp {
-                lmdb_call!(ffi::mdb_set_dupsort(raw_tx, raw, fun));
+                lmdb_call!(liblmdb::mdb_set_dupsort(raw_tx, raw, fun));
             }
 
-            try!(wrapped_tx.commit());
+            wrapped_tx.commit()?;
             raw
         };
 
@@ -741,7 +742,7 @@ impl<'a> Database<'a> {
                 env: env,
                 dbi: raw,
                 close_on_drop: true,
-            }
+            },
         })
     }
 
@@ -762,13 +763,16 @@ impl<'a> Database<'a> {
     /// ## Panics
     ///
     /// Panics if `raw` is a handle already owned by `env`.
-    pub unsafe fn from_raw<E>(env: E, raw: ffi::MDB_dbi) -> Self
-    where E : Into<Supercow<'a, Environment>> {
+    pub unsafe fn from_raw<E>(env: E, raw: liblmdb::MDB_dbi) -> Self
+    where
+        E: Into<Supercow<'a, Environment>>,
+    {
         let env: Supercow<'a, Environment> = env.into();
 
-        use env;
+        use crate::env;
         {
-            let mut locked_dbis = env::env_open_dbis(&env).lock()
+            let mut locked_dbis = env::env_open_dbis(&env)
+                .lock()
                 .expect("open_dbis lock poisoned");
 
             if !locked_dbis.insert(raw) {
@@ -781,7 +785,7 @@ impl<'a> Database<'a> {
                 env: env,
                 dbi: raw,
                 close_on_drop: true,
-            }
+            },
         }
     }
 
@@ -798,14 +802,16 @@ impl<'a> Database<'a> {
     ///
     /// The caller must ensure that nothing closes the handle until the
     /// resulting `Database` is dropped.
-    pub unsafe fn borrow_raw<E>(env: E, raw: ffi::MDB_dbi) -> Self
-    where E : Into<Supercow<'a, Environment>> {
+    pub unsafe fn borrow_raw<E>(env: E, raw: liblmdb::MDB_dbi) -> Self
+    where
+        E: Into<Supercow<'a, Environment>>,
+    {
         Database {
             db: DbHandle {
                 env: env.into(),
                 dbi: raw,
                 close_on_drop: false,
-            }
+            },
         }
     }
 
@@ -831,7 +837,7 @@ impl<'a> Database<'a> {
     /// {
     ///   let db = lmdb::Database::open(
     ///     &env, Some("example-db"), &lmdb::DatabaseOptions::new(
-    ///       lmdb::db::CREATE)).unwrap();
+    ///       lmdb::db::Flags::CREATE)).unwrap();
     ///   // Do stuff with `db`
     ///
     ///   // Delete the database itself. This also consumes `db`.
@@ -842,12 +848,12 @@ impl<'a> Database<'a> {
     ///   // `WriteAccessor::clear_db()` to do that.
     ///   let db = lmdb::Database::open(
     ///     &env, Some("example-db"), &lmdb::DatabaseOptions::new(
-    ///       lmdb::db::CREATE)).unwrap();
+    ///       lmdb::db::Flags::CREATE)).unwrap();
     /// }
     /// # }
     /// ```
     pub fn delete(self) -> Result<()> {
-        try!(env::dbi_delete(&self.db.env, self.db.dbi));
+        env::dbi_delete(&self.db.env, self.db.dbi)?;
         mem::forget(self.db);
         Ok(())
     }
@@ -893,11 +899,8 @@ impl<'a> Database<'a> {
     /// `Database`.
     ///
     /// If it matches, returns `Ok(())`; otherwise, returns `Err`.
-    pub fn assert_same_env(&self, other_env: &Environment)
-                           -> Result<()> {
-        if &*self.db.env as *const Environment !=
-            other_env as *const Environment
-        {
+    pub fn assert_same_env(&self, other_env: &Environment) -> Result<()> {
+        if &*self.db.env as *const Environment != other_env as *const Environment {
             Err(Error::Mismatch)
         } else {
             Ok(())
@@ -910,13 +913,13 @@ impl<'a> Database<'a> {
     ///
     /// Renamed to `as_raw()` for consistency.
     #[deprecated(since = "0.4.4", note = "use as_raw() instead")]
-    pub fn dbi(&self) -> ffi::MDB_dbi {
+    pub fn dbi(&self) -> liblmdb::MDB_dbi {
         self.db.dbi
     }
 
     /// Returns the underlying integer handle for this database.
     #[inline]
-    pub fn as_raw(&self) -> ffi::MDB_dbi {
+    pub fn as_raw(&self) -> liblmdb::MDB_dbi {
         self.db.dbi
     }
 
@@ -925,7 +928,7 @@ impl<'a> Database<'a> {
     ///
     /// If this `Database` owns the database handle, it is not closed, but it
     /// is removed from the list of handles owned by the `Environment`.
-    pub fn into_raw(mut self) -> ffi::MDB_dbi {
+    pub fn into_raw(mut self) -> liblmdb::MDB_dbi {
         self.disown();
         self.db.dbi
     }
@@ -939,7 +942,8 @@ impl<'a> Database<'a> {
         use env;
 
         if self.db.close_on_drop {
-            let mut locked_dbis = env::env_open_dbis(&self.db.env).lock()
+            let mut locked_dbis = env::env_open_dbis(&self.db.env)
+                .lock()
                 .expect("open_dbis lock poisoned");
 
             locked_dbis.remove(&self.db.dbi);
@@ -950,9 +954,9 @@ impl<'a> Database<'a> {
 
 #[cfg(test)]
 mod test {
-    use test_helpers::*;
-    use dbi::*;
-    use tx::*;
+    use crate::dbi::*;
+    use crate::test_helpers::*;
+    use crate::tx::*;
 
     #[test]
     fn disown_allows_sharing() {
@@ -962,12 +966,14 @@ mod test {
         let db2 = defdb(&env);
 
         let tx = WriteTransaction::new(&env).unwrap();
-        tx.access().put(&db1, "foo", "bar", put::Flags::empty()).unwrap();
+        tx.access()
+            .put(&db1, "foo", "bar", put::Flags::empty())
+            .unwrap();
         tx.commit().unwrap();
         drop(db1);
 
         let tx = ReadTransaction::new(&env).unwrap();
-        assert_eq!("bar", tx.access().get::<str,str>(&db2, "foo").unwrap());
+        assert_eq!("bar", tx.access().get::<str, str>(&db2, "foo").unwrap());
     }
 
     #[test]
@@ -977,11 +983,13 @@ mod test {
         let db2 = unsafe { Database::borrow_raw(&env, db1.as_raw()) };
 
         let tx = WriteTransaction::new(&env).unwrap();
-        tx.access().put(&db2, "foo", "bar", put::Flags::empty()).unwrap();
+        tx.access()
+            .put(&db2, "foo", "bar", put::Flags::empty())
+            .unwrap();
         tx.commit().unwrap();
         drop(db2);
 
         let tx = ReadTransaction::new(&env).unwrap();
-        assert_eq!("bar", tx.access().get::<str,str>(&db1, "foo").unwrap());
+        assert_eq!("bar", tx.access().get::<str, str>(&db1, "foo").unwrap());
     }
 }
