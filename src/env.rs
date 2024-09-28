@@ -7,26 +7,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use libc::{self, c_char, c_int, c_uint, c_void};
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::mem;
 use std::ptr;
 use std::sync::Mutex;
-use libc::{self, c_char, c_int, c_uint, c_void};
+use supercow::{NonSyncSupercow, Supercow};
 
-use ffi;
-use ffi2;
-use tx::TxHandle;
-use ::{Fd, FileMode, Result};
+use crate::ffi;
+
+use crate::tx::TxHandle;
+use crate::{Fd, FileMode, Result};
 
 /// Flags used when opening an LMDB environment.
 pub mod open {
-    use libc;
-    use ffi;
+    use crate::ffi;
 
     bitflags! {
         /// Flags used when opening an LMDB environment.
-        pub struct Flags : libc::c_uint {
+        pub struct Flags: u32 {
             /// Use a fixed address for the mmap region. This flag must be
             /// specified when creating the environment, and is stored
             /// persistently in the environment. If successful, the memory map
@@ -137,7 +137,7 @@ pub mod open {
 
 /// Flags used when copying an LMDB environment.
 pub mod copy {
-    use ffi2;
+
     use libc;
 
     bitflags! {
@@ -146,7 +146,7 @@ pub mod copy {
             /// Perform compaction while copying: omit free pages and sequentially
             /// renumber all pages in output. This option consumes more CPU and
             /// runs more slowly than the default.
-            const COMPACT = ffi2::MDB_CP_COMPACT;
+            const COMPACT = crate::ffi::MDB_CP_COMPACT;
         }
     }
 }
@@ -154,18 +154,15 @@ pub mod copy {
 #[derive(Debug)]
 struct EnvHandle(*mut ffi::MDB_env, bool);
 
-unsafe impl Sync for EnvHandle { }
-unsafe impl Send for EnvHandle { }
+unsafe impl Sync for EnvHandle {}
+unsafe impl Send for EnvHandle {}
 impl Drop for EnvHandle {
     fn drop(&mut self) {
         if self.1 {
-            unsafe {
-                ffi::mdb_env_close(self.0)
-            }
+            unsafe { ffi::mdb_env_close(self.0) }
         }
     }
 }
-
 
 /// Handle on an uninitialised LMDB environment to allow configuring pre-open
 /// options.
@@ -180,7 +177,9 @@ impl EnvBuilder {
         let mut env: *mut ffi::MDB_env = ptr::null_mut();
         unsafe {
             lmdb_call!(ffi::mdb_env_create(&mut env));
-            Ok(EnvBuilder { env: EnvHandle(env, true) })
+            Ok(EnvBuilder {
+                env: EnvHandle(env, true),
+            })
         }
     }
 
@@ -199,8 +198,7 @@ impl EnvBuilder {
     /// See also `Environment::set_mapsize()`.
     pub fn set_mapsize(&mut self, size: usize) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_set_mapsize(
-                self.env.0, size as libc::size_t));
+            lmdb_call!(ffi::mdb_env_set_mapsize(self.env.0, size as libc::size_t));
         }
 
         Ok(())
@@ -217,7 +215,9 @@ impl EnvBuilder {
     pub fn set_maxreaders(&mut self, readers: u32) -> Result<()> {
         unsafe {
             lmdb_call!(ffi::mdb_env_set_maxreaders(
-                self.env.0, readers as libc::c_uint));
+                self.env.0,
+                readers as libc::c_uint
+            ));
         }
 
         Ok(())
@@ -234,8 +234,7 @@ impl EnvBuilder {
     /// linear search of the opened slots.
     pub fn set_maxdbs(&mut self, dbs: u32) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi::mdb_env_set_maxdbs(
-                self.env.0, dbs as libc::c_uint));
+            lmdb_call!(ffi::mdb_env_set_maxdbs(self.env.0, dbs as libc::c_uint));
         }
 
         Ok(())
@@ -267,11 +266,19 @@ impl EnvBuilder {
     /// - If the caller uses flags that result in the creation of a sparse
     ///   file, the caller must ensure there is actually sufficient disk space
     ///   for all pages of the file or else a segfault may occur.
-    pub unsafe fn open(self, path: &str, flags: open::Flags,
-                       mode: FileMode) -> Result<Environment> {
-        let path_cstr = try!(CString::new(path));
+    pub unsafe fn open(
+        self,
+        path: &str,
+        flags: open::Flags,
+        mode: FileMode,
+    ) -> Result<Environment> {
+        let path_cstr = CString::new(path)?;
         lmdb_call!(ffi::mdb_env_open(
-            self.env.0, path_cstr.as_ptr(), flags.bits(), mode));
+            self.env.0,
+            path_cstr.as_ptr(),
+            flags.bits(),
+            mode
+        ));
         Ok(Environment {
             env: self.env,
             open_dbis: Mutex::new(HashSet::new()),
@@ -289,7 +296,7 @@ pub struct Environment {
 }
 
 /// Statistics information about an environment.
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Stat {
     /// Size of a database page. This is currently the same for all databases.
     pub psize: u32,
@@ -319,7 +326,7 @@ impl From<ffi::MDB_stat> for Stat {
 }
 
 /// Configuration information about an environment.
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct EnvInfo {
     /// Address of map, if fixed
     pub mapaddr: *const c_void,
@@ -436,17 +443,20 @@ impl Environment {
     /// # let env = create_env();
     /// let out = tempdir::TempDir::new_in(".", "lmdbcopy").unwrap();
     /// env.copy(out.path().to_str().unwrap(),
-    ///          lmdb::copy::COMPACT).unwrap();
+    ///          lmdb::copy::Flags::COMPACT).unwrap();
     /// // We could now open up an independent environment in `lmdbcopyXXXX`
     /// // or upload it somewhere, eg, while `env` could continue being
     /// // modified concurrently.
     /// # }
     /// ```
     pub fn copy(&self, path: &str, flags: copy::Flags) -> Result<()> {
-        let path_cstr = try!(CString::new(path));
+        let path_cstr = CString::new(path)?;
         unsafe {
-            lmdb_call!(ffi2::mdb_env_copy2(
-                self.env.0, path_cstr.as_ptr(), flags.bits()));
+            lmdb_call!(ffi::mdb_env_copy2(
+                self.env.0,
+                path_cstr.as_ptr(),
+                flags.bits()
+            ));
         }
         Ok(())
     }
@@ -464,7 +474,7 @@ impl Environment {
     /// See long-lived transactions under Caveats.
     pub fn copyfd(&self, fd: Fd, flags: copy::Flags) -> Result<()> {
         unsafe {
-            lmdb_call!(ffi2::mdb_env_copyfd2(self.env.0, fd, flags.bits()));
+            lmdb_call!(ffi::mdb_env_copyfd2(self.env.0, fd, flags.bits()));
         }
         Ok(())
     }
@@ -538,21 +548,23 @@ impl Environment {
     /// # let env = create_env();
     /// unsafe {
     ///   // Enable the NOMETASYNC and MAPASYNC flags
-    ///   env.set_flags(lmdb::open::NOMETASYNC | lmdb::open::MAPASYNC, true)
+    ///   env.set_flags(lmdb::open::Flags::NOMETASYNC | lmdb::open::Flags::MAPASYNC, true)
     ///     .unwrap();
     ///   assert!(env.flags().unwrap().contains(
-    ///     lmdb::open::NOMETASYNC | lmdb::open::MAPASYNC));
+    ///     lmdb::open::Flags::NOMETASYNC | lmdb::open::Flags::MAPASYNC));
     ///   // Turn MAPASYNC back off, leaving NOMETASYNC set
-    ///   env.set_flags(lmdb::open::MAPASYNC, false).unwrap();
-    ///   assert!(env.flags().unwrap().contains(lmdb::open::NOMETASYNC));
-    ///   assert!(!env.flags().unwrap().contains(lmdb::open::MAPASYNC));
+    ///   env.set_flags(lmdb::open::Flags::MAPASYNC, false).unwrap();
+    ///   assert!(env.flags().unwrap().contains(lmdb::open::Flags::NOMETASYNC));
+    ///   assert!(!env.flags().unwrap().contains(lmdb::open::Flags::MAPASYNC));
     /// }
     /// # }
     /// ```
-    pub unsafe fn set_flags(&self, flags: open::Flags,
-                            onoff: bool) -> Result<()> {
+    pub unsafe fn set_flags(&self, flags: open::Flags, onoff: bool) -> Result<()> {
         lmdb_call!(ffi::mdb_env_set_flags(
-            self.env.0, flags.bits(), onoff as c_int));
+            self.env.0,
+            flags.bits(),
+            onoff as c_int
+        ));
         Ok(())
     }
 
@@ -571,13 +583,15 @@ impl Environment {
     ///
     /// Panics if LMDB returns success but sets the path to a NULL pointer.
     pub fn path(&self) -> Result<&CStr> {
-        let mut raw: *mut c_char = ptr::null_mut();
+        let raw: *mut *const c_char = ptr::null_mut();
         unsafe {
-            lmdb_call!(ffi::mdb_env_get_path(self.env.0, &mut raw));
+            lmdb_call!(ffi::mdb_env_get_path(self.env.0, raw));
             if raw.is_null() {
                 panic!("mdb_env_get_path() returned NULL pointer");
             }
-            Ok(CStr::from_ptr(raw))
+
+            // TODO: verify you didn't break this
+            Ok(CStr::from_ptr(*raw.as_ref().unwrap()))
         }
     }
 
@@ -634,9 +648,7 @@ impl Environment {
     /// Depends on the compile-time constant `MDB_MAXKEYSIZE` in LMDB.
     /// Default 511.
     pub fn maxkeysize(&self) -> u32 {
-        unsafe {
-            ffi::mdb_env_get_maxkeysize(self.env.0) as u32
-        }
+        unsafe { ffi::mdb_env_get_maxkeysize(self.env.0) as u32 }
     }
 
     /// Check for stale entries in the reader lock table.
@@ -655,10 +667,8 @@ impl Environment {
 pub fn dbi_close(this: &Environment, dbi: ffi::MDB_dbi) {
     // Hold the lock through the end of the function to also guard the
     // LMDB's unsynchronised DBI table.
-    let mut locked_dbis = this.open_dbis.lock()
-        .expect("open_dbis lock poisoned");
-    assert!(locked_dbis.remove(&dbi),
-            "closed dbi that wasn't open");
+    let mut locked_dbis = this.open_dbis.lock().expect("open_dbis lock poisoned");
+    assert!(locked_dbis.remove(&dbi), "closed dbi that wasn't open");
 
     unsafe {
         ffi::mdb_dbi_close(this.env.0, dbi);
@@ -669,52 +679,58 @@ pub fn dbi_close(this: &Environment, dbi: ffi::MDB_dbi) {
 pub fn dbi_delete(this: &Environment, dbi: ffi::MDB_dbi) -> Result<()> {
     // Hold the lock across the call to `mdb_drop()` to also guard its
     // unsynchronised DBI table.
-    let mut locked_dbis = this.open_dbis.lock()
-        .expect("open_dbis lock poisoned");
+    let mut locked_dbis = this.open_dbis.lock().expect("open_dbis lock poisoned");
     unsafe {
         let mut raw_txn: *mut ffi::MDB_txn = ptr::null_mut();
         lmdb_call!(ffi::mdb_txn_begin(
-            this.env.0, ptr::null_mut(), 0, &mut raw_txn));
+            this.env.0,
+            ptr::null_mut(),
+            0,
+            &mut raw_txn
+        ));
         let mut txn = TxHandle(raw_txn);
         lmdb_call!(ffi::mdb_drop(raw_txn, dbi, 1 /* delete */));
-        try!(txn.commit());
+        txn.commit()?;
     }
-    assert!(locked_dbis.remove(&dbi),
-            "closed dbi that wasn't open");
+    assert!(locked_dbis.remove(&dbi), "closed dbi that wasn't open");
     Ok(())
 }
 
 // Internal API
-pub fn env_ptr(this: &Environment) -> *mut ffi::MDB_env {
+pub fn env_ptr<'a>(this: &'a Supercow<'a, Environment>) -> *mut ffi::MDB_env {
+    this.env.0
+}
+
+pub fn env_ptr_no_sync<'a>(this: &'a NonSyncSupercow<'a, Environment>) -> *mut ffi::MDB_env {
     this.env.0
 }
 
 // Internal API
-pub fn env_open_dbis(this: &Environment) -> &Mutex<HashSet<ffi::MDB_dbi>> {
+pub fn env_open_dbis<'a>(this: &'a Supercow<'a, Environment>) -> &Mutex<HashSet<ffi::MDB_dbi>> {
     &this.open_dbis
 }
 
 #[cfg(test)]
 mod test {
-    use test_helpers::*;
-    use env::*;
-    use tx::*;
+    use crate::env::*;
+    use crate::test_helpers::*;
+    use crate::tx::*;
 
     #[test]
     fn borrow_raw_doesnt_take_ownership() {
         let outer_env = create_env();
         {
-            let inner_env = unsafe {
-                Environment::borrow_raw(outer_env.as_raw())
-            };
+            let inner_env = unsafe { Environment::borrow_raw(outer_env.as_raw()) };
             let db = defdb(&inner_env);
             let tx = WriteTransaction::new(&inner_env).unwrap();
-            tx.access().put(&db, "foo", "bar", put::Flags::empty()).unwrap();
+            tx.access()
+                .put(&db, "foo", "bar", put::Flags::empty())
+                .unwrap();
             tx.commit().unwrap();
         }
 
         let db = defdb(&outer_env);
         let tx = ReadTransaction::new(&outer_env).unwrap();
-        assert_eq!("bar", tx.access().get::<str,str>(&db, "foo").unwrap());
+        assert_eq!("bar", tx.access().get::<str, str>(&db, "foo").unwrap());
     }
 }

@@ -12,10 +12,10 @@ use std::mem;
 use std::slice;
 use libc::{self, c_void};
 
-use ffi;
+use crate::ffi;
 
-use error::{Error, Result};
-use traits::*;
+use crate::error::{Error, Result};
+use crate::traits::*;
 
 pub const EMPTY_VAL: ffi::MDB_val = ffi::MDB_val {
     mv_size: 0,

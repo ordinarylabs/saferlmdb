@@ -7,27 +7,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use libc::c_uint;
 use std::cell::Cell;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
-use libc::c_uint;
 
-use ffi;
-use ffi2;
-use supercow::{Supercow, NonSyncSupercow};
+use crate::ffi;
 
-use env::{self, Environment, Stat};
-use dbi::{db, Database};
-use error::{Error, Result};
-use mdb_vals::*;
-use traits::*;
-use cursor::{self, Cursor, StaleCursor};
+use supercow::{NonSyncSupercow, Supercow};
+
+use crate::cursor::{self, Cursor, StaleCursor};
+use crate::dbi::{db, Database};
+use crate::env::{self, Environment, Stat};
+use crate::error::{Error, Result};
+use crate::mdb_vals::*;
+use crate::traits::*;
 
 /// Flags used when calling the various `put` functions.
 pub mod put {
-    use ffi;
-    use libc;
+    use crate::ffi;
 
     bitflags! {
         /// Flags used when calling the various `put` functions.
@@ -36,7 +35,8 @@ pub mod put {
         /// because their memory ownership and/or parameter semantics are
         /// different. `CURRENT` is expressed separately on the cursor
         /// functions.
-        pub struct Flags : libc::c_uint {
+        #[derive(Clone)]
+        pub struct Flags: u32 {
             /// Enter the new key/data pair only if it does not already appear
             /// in the database. This flag may only be specified if the
             /// database was opened with `DUPSORT`. The function will return
@@ -61,9 +61,9 @@ pub mod put {
             ///   // Duplicate, but that's OK by default
             ///   access.put(&db, "Fruit", "Apple", lmdb::put::Flags::empty()).unwrap();
             ///   // `NODUPDATA` blocks adding an identical item
-            ///   assert!(access.put(&db, "Fruit", "Apple", lmdb::put::NODUPDATA).is_err());
+            ///   assert!(access.put(&db, "Fruit", "Apple", lmdb::put::Flags::NODUPDATA).is_err());
             ///   // But doesn't affect pairs not already present
-            ///   access.put(&db, "Fruit", "Durian", lmdb::put::NODUPDATA).unwrap();
+            ///   access.put(&db, "Fruit", "Durian", lmdb::put::Flags::NODUPDATA).unwrap();
             /// }
             /// txn.commit().unwrap();
             /// # }
@@ -91,7 +91,7 @@ pub mod put {
             ///   let mut cursor = txn.cursor(&db).unwrap();
             ///   assert_eq!(Err(lmdb::Error::Code(lmdb::error::KEYEXIST)),
             ///              cursor.put(&mut access, "Fruit", "Durian",
-            ///                         lmdb::put::NODUPDATA));
+            ///                         lmdb::put::Flags::NODUPDATA));
             ///   assert_eq!(("Fruit", "Durian"), cursor.get_current(&access).unwrap());
             /// }
             /// txn.commit().unwrap();
@@ -122,7 +122,7 @@ pub mod put {
             ///   access.put(&db, "Fruit", "Orange", lmdb::put::Flags::empty()).unwrap();
             ///   assert_eq!("Orange", access.get::<str,str>(&db, "Fruit").unwrap());
             ///   // But `NOOVERWRITE` prevents that
-            ///   assert!(access.put(&db, "Fruit", "Durian", lmdb::put::NOOVERWRITE).is_err());
+            ///   assert!(access.put(&db, "Fruit", "Durian", lmdb::put::Flags::NOOVERWRITE).is_err());
             ///   assert_eq!("Orange", access.get::<str,str>(&db, "Fruit").unwrap());
             /// }
             /// txn.commit().unwrap();
@@ -150,8 +150,8 @@ pub mod put {
             ///   assert_eq!(2, cursor.count().unwrap());
             ///
             ///   // But this can be prevented with `NOOVERWRITE`
-            ///   access.put(&db, "Veggie", "Carrot", lmdb::put::NOOVERWRITE).unwrap();
-            ///   assert!(access.put(&db, "Veggie", "Squash", lmdb::put::NOOVERWRITE).is_err());
+            ///   access.put(&db, "Veggie", "Carrot", lmdb::put::Flags::NOOVERWRITE).unwrap();
+            ///   assert!(access.put(&db, "Veggie", "Squash", lmdb::put::Flags::NOOVERWRITE).is_err());
             ///   cursor.seek_k::<str,str>(&access, "Veggie").unwrap();
             ///   assert_eq!(1, cursor.count().unwrap());
             /// }
@@ -179,11 +179,11 @@ pub mod put {
             /// {
             ///   let mut access = txn.access();
             ///   // Load values in ascending order
-            ///   access.put(&db, "France", "Paris", lmdb::put::APPEND).unwrap();
-            ///   access.put(&db, "Germany", "Berlin", lmdb::put::APPEND).unwrap();
-            ///   access.put(&db, "Latvia", "Rīga", lmdb::put::APPEND).unwrap();
+            ///   access.put(&db, "France", "Paris", lmdb::put::Flags::APPEND).unwrap();
+            ///   access.put(&db, "Germany", "Berlin", lmdb::put::Flags::APPEND).unwrap();
+            ///   access.put(&db, "Latvia", "Rīga", lmdb::put::Flags::APPEND).unwrap();
             ///   // Error if you violate ordering
-            ///   assert!(access.put(&db, "Armenia", "Yerevan", lmdb::put::APPEND)
+            ///   assert!(access.put(&db, "Armenia", "Yerevan", lmdb::put::Flags::APPEND)
             ///           .is_err());
             /// }
             /// txn.commit().unwrap();
@@ -198,7 +198,7 @@ pub mod put {
 
 /// Flags used when deleting items.
 pub mod del {
-    use ffi;
+    use crate::ffi;
     use libc;
 
     bitflags! {
@@ -222,9 +222,9 @@ pub mod del {
             /// {
             ///   let mut access = txn.access();
             ///   let f = lmdb::put::Flags::empty();
-            ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-            ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-            ///   access.put(&db, "Fruit", "Durian", f).unwrap();
+            ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+            ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+            ///   access.put(&db, "Fruit", "Durian", f.clone()).unwrap();
             ///
             ///   let mut cursor = txn.cursor(&db).unwrap();
             ///   cursor.seek_kv("Fruit", "Durian").unwrap();
@@ -233,7 +233,7 @@ pub mod del {
             ///   cursor.seek_k::<str,str>(&access, "Fruit").unwrap();
             ///   assert_eq!(2, cursor.count().unwrap());
             ///   // But with `NODUPDATA`, they will all go away
-            ///   cursor.del(&mut access, lmdb::del::NODUPDATA).unwrap();
+            ///   cursor.del(&mut access, lmdb::del::Flags::NODUPDATA).unwrap();
             ///   assert!(cursor.seek_k::<str,str>(&access, "Fruit").is_err());
             /// }
             /// txn.commit().unwrap();
@@ -304,9 +304,9 @@ impl TxHandle {
 /// `'env` is covariant: given two lifetimes `'x` and `'y` where `'x: 'y`, a
 /// `&ConstTransaction<'x>` will implicitly coerce to `&ConstTransaction<'y>`.
 ///
-/// ```rust,norun
+/// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # extern crate lmdb_zero as lmdb;
+/// # use ordinary_lmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &lmdb::ConstTransaction<'x>)
@@ -432,9 +432,9 @@ pub struct ResetTransaction<'env>(ReadTransaction<'env>);
 /// `'x` and `'y` where `'x: 'y`, a `&ConstAccessor<'x>` can be implicitly
 /// coerced into a `&ConstAccessor<'y>`.
 ///
-/// ```rust,norun
+/// ```rust,no_run
 /// # #![allow(dead_code)]
-/// # extern crate lmdb_zero as lmdb;
+/// # use ordinary_lmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &lmdb::ConstAccessor<'x>)
@@ -475,7 +475,7 @@ impl<'txn> Drop for ConstAccessor<'txn> {
 ///
 /// ```rust,ignore
 /// # #![allow(dead_code)]
-/// # extern crate lmdb_zero as lmdb;
+/// # use ordinary_lmdb as lmdb;
 /// # fn main() { }
 /// #
 /// fn convariance<'x, 'y>(db: &mut lmdb::WriteAccessor<'x>)
@@ -503,17 +503,24 @@ impl<'txn> Drop for ConstAccessor<'txn> {
 pub struct WriteAccessor<'txn>(ConstAccessor<'txn>);
 
 impl<'env> ConstTransaction<'env> {
-    fn new<'outer: 'env, E>(env: E,
-                            parent: Option<&'env mut ConstTransaction<'outer>>,
-                            flags: c_uint) -> Result<Self>
-    where E : Into<NonSyncSupercow<'env, Environment>> {
-        let env : NonSyncSupercow<'env, Environment> = env.into();
+    fn new<'outer: 'env, E>(
+        env: E,
+        parent: Option<&'env mut ConstTransaction<'outer>>,
+        flags: c_uint,
+    ) -> Result<Self>
+    where
+        E: Into<NonSyncSupercow<'env, Environment>>,
+    {
+        let env: NonSyncSupercow<'env, Environment> = env.into();
 
         let mut rawtx: *mut ffi::MDB_txn = ptr::null_mut();
         unsafe {
             lmdb_call!(ffi::mdb_txn_begin(
-                env::env_ptr(&env), parent.map_or(ptr::null_mut(), |p| p.tx.0),
-                flags, &mut rawtx));
+                env::env_ptr_no_sync(&env),
+                parent.map_or(ptr::null_mut(), |p| p.tx.0),
+                flags,
+                &mut rawtx
+            ));
         }
 
         Ok(ConstTransaction {
@@ -557,8 +564,10 @@ impl<'env> ConstTransaction<'env> {
     /// ```
     #[inline]
     pub fn access(&self) -> ConstAccessor {
-        assert!(!self.has_yielded_accessor.get(),
-                "Transaction accessor already returned");
+        assert!(
+            !self.has_yielded_accessor.get(),
+            "Transaction accessor already returned"
+        );
         self.has_yielded_accessor.set(true);
         ConstAccessor(self)
     }
@@ -574,22 +583,21 @@ impl<'env> ConstTransaction<'env> {
     /// imported so that the needed alternate implementations of this method
     /// are available.
     #[inline]
-    pub fn cursor<'txn, 'db, DB>(&'txn self, db: DB)
-                                 -> Result<Cursor<'txn,'db>>
-    where DB : Into<Supercow<'db, Database<'db>>> {
+    pub fn cursor<'txn, 'db, DB>(&'txn self, db: DB) -> Result<Cursor<'txn, 'db>>
+    where
+        DB: Into<Supercow<'db, Database<'db>>>,
+    {
         Cursor::construct(Supercow::borrowed(self), db.into())
     }
 
     /// Returns the internal id of this transaction.
     pub fn id(&self) -> usize {
-        unsafe {
-            ffi2::mdb_txn_id(self.tx.0)
-        }
+        unsafe { ffi::mdb_txn_id(self.tx.0) }
     }
 
     /// Retrieves statistics for a database.
     pub fn db_stat(&self, db: &Database) -> Result<Stat> {
-        try!(db.assert_same_env(&self.env));
+        db.assert_same_env(&self.env)?;
 
         unsafe {
             let mut raw: ffi::MDB_stat = mem::zeroed();
@@ -600,7 +608,7 @@ impl<'env> ConstTransaction<'env> {
 
     /// Retrieve the DB flags for a database handle.
     pub fn db_flags(&self, db: &Database) -> Result<db::Flags> {
-        try!(db.assert_same_env(&self.env));
+        db.assert_same_env(&self.env)?;
 
         let mut raw: c_uint = 0;
         unsafe {
@@ -610,11 +618,8 @@ impl<'env> ConstTransaction<'env> {
     }
 
     #[inline]
-    fn assert_sensible_cursor(&self, cursor: &Cursor)
-                              -> Result<()> {
-        if self as *const ConstTransaction !=
-            cursor::txn_ref(cursor) as *const ConstTransaction
-        {
+    fn assert_sensible_cursor(&self, cursor: &Cursor) -> Result<()> {
+        if self as *const ConstTransaction != cursor::txn_ref(cursor) as *const ConstTransaction {
             Err(Error::Mismatch)
         } else {
             Ok(())
@@ -624,18 +629,15 @@ impl<'env> ConstTransaction<'env> {
 
 // Internally used by other parts of the crate
 #[inline]
-pub fn assert_sensible_cursor(access: &ConstAccessor, cursor: &Cursor)
-                              -> Result<()> {
+pub fn assert_sensible_cursor(access: &ConstAccessor, cursor: &Cursor) -> Result<()> {
     access.0.assert_sensible_cursor(cursor)
 }
 #[inline]
-pub fn assert_same_env(txn: &ConstTransaction, db: &Database)
-                       -> Result<()> {
+pub fn assert_same_env(txn: &ConstTransaction, db: &Database) -> Result<()> {
     db.assert_same_env(&txn.env)
 }
 #[inline]
-pub fn assert_in_env(txn: &ConstTransaction, env: &Environment)
-                     -> Result<()> {
+pub fn assert_in_env(txn: &ConstTransaction, env: &Environment) -> Result<()> {
     if env as *const Environment != &*txn.env as *const Environment {
         Err(Error::Mismatch)
     } else {
@@ -672,9 +674,14 @@ impl<'env> ReadTransaction<'env> {
     /// read-only transactions. Attempting to open a read-only transaction
     /// while the current thread holds a read-write transaction will deadlock.
     pub fn new<E>(env: E) -> Result<Self>
-    where E : Into<NonSyncSupercow<'env, Environment>> {
-        Ok(ReadTransaction(try!(ConstTransaction::new(
-            env, None, ffi::MDB_RDONLY))))
+    where
+        E: Into<NonSyncSupercow<'env, Environment>>,
+    {
+        Ok(ReadTransaction(ConstTransaction::new(
+            env,
+            None,
+            ffi::MDB_RDONLY,
+        )?))
     }
 
     /// Dissociates the given cursor from this transaction and its database,
@@ -761,10 +768,11 @@ impl<'env> ReadTransaction<'env> {
     /// }
     /// # }
     /// ```
-    pub fn dissoc_cursor<'txn,'db>(&self, cursor: Cursor<'txn,'db>)
-                                   -> Result<StaleCursor<'db>>
-    where 'env: 'db {
-        try!(self.assert_sensible_cursor(&cursor));
+    pub fn dissoc_cursor<'txn, 'db>(&self, cursor: Cursor<'txn, 'db>) -> Result<StaleCursor<'db>>
+    where
+        'env: 'db,
+    {
+        self.assert_sensible_cursor(&cursor)?;
         let env = Supercow::clone_non_owned(&self.env)
             .expect("Cannot use owned `Environment` with `dissoc_cursor`");
         Ok(cursor::to_stale(cursor, env))
@@ -782,11 +790,12 @@ impl<'env> ReadTransaction<'env> {
     /// `Cursor<'static,'db>`, make sure you have the `AssocCursor` trait
     /// imported so that the needed alternate implementations of this method
     /// are available.
-    pub fn assoc_cursor<'txn,'db>(&'txn self, cursor: StaleCursor<'db>)
-                                  -> Result<Cursor<'txn,'db>> {
+    pub fn assoc_cursor<'txn, 'db>(
+        &'txn self,
+        cursor: StaleCursor<'db>,
+    ) -> Result<Cursor<'txn, 'db>> {
         let self_as_const: &'txn ConstTransaction = &*self;
-        Cursor::from_stale(cursor,
-                           NonSyncSupercow::borrowed(&*self_as_const))
+        Cursor::from_stale(cursor, NonSyncSupercow::borrowed(&*self_as_const))
     }
 
     /// Resets this transaction, releasing most of its resources but allowing
@@ -826,7 +835,9 @@ impl<'env> ReadTransaction<'env> {
     /// # }
     /// ```
     pub fn reset(self) -> ResetTransaction<'env> {
-        unsafe { ffi::mdb_txn_reset(self.0.tx.0); }
+        unsafe {
+            ffi::mdb_txn_reset(self.0.tx.0);
+        }
         ResetTransaction(self)
     }
 }
@@ -835,14 +846,15 @@ impl<'env> ResetTransaction<'env> {
     /// Renews this read-only transaction, making it available for more
     /// reading.
     pub fn renew(self) -> Result<ReadTransaction<'env>> {
-        unsafe { lmdb_call!(ffi::mdb_txn_renew((self.0).0.tx.0)); }
+        unsafe {
+            lmdb_call!(ffi::mdb_txn_renew((self.0).0.tx.0));
+        }
         Ok(self.0)
     }
 }
 
 impl<'env> Deref for WriteTransaction<'env> {
     type Target = ConstTransaction<'env>;
-
 
     fn deref(&self) -> &ConstTransaction<'env> {
         &self.0
@@ -866,8 +878,10 @@ impl<'env> WriteTransaction<'env> {
     /// to start two top-level read-write transactions on the same thread will
     /// deadlock).
     pub fn new<E>(env: E) -> Result<Self>
-    where E : Into<NonSyncSupercow<'env, Environment>> {
-        Ok(WriteTransaction(try!(ConstTransaction::new(env, None, 0))))
+    where
+        E: Into<NonSyncSupercow<'env, Environment>>,
+    {
+        Ok(WriteTransaction(ConstTransaction::new(env, None, 0)?))
     }
 
     /// Opens a new, read-write transaction as a child transaction of the given
@@ -898,9 +912,9 @@ impl<'env> WriteTransaction<'env> {
     /// let f = lmdb::put::Flags::empty();
     /// {
     ///   let mut access = txn.access();
-    ///   access.put(&db, "Germany", "Berlin", f).unwrap();
-    ///   access.put(&db, "Latvia", "Rīga", f).unwrap();
-    ///   access.put(&db, "France", "Paris", f).unwrap();
+    ///   access.put(&db, "Germany", "Berlin", f.clone()).unwrap();
+    ///   access.put(&db, "Latvia", "Rīga", f.clone()).unwrap();
+    ///   access.put(&db, "France", "Paris", f.clone()).unwrap();
     /// }
     ///
     /// {
@@ -908,7 +922,7 @@ impl<'env> WriteTransaction<'env> {
     ///   let subtx = txn.child_tx().unwrap();
     ///   let mut access = subtx.access();
     ///   assert_eq!("Berlin", access.get::<str,str>(&db, "Germany").unwrap());
-    ///   access.put(&db, "Germany", "Frankfurt", f).unwrap();
+    ///   access.put(&db, "Germany", "Frankfurt", f.clone()).unwrap();
     ///   assert_eq!("Frankfurt", access.get::<str,str>(&db, "Germany").unwrap());
     ///   // Don't commit --- let the child transaction abort (roll back)
     /// }
@@ -918,7 +932,7 @@ impl<'env> WriteTransaction<'env> {
     ///   // Now we can do some more reading and writing on the original
     ///   // transaction.
     ///   // The effect of the aborted child transaction are not visible.
-    ///   access.put(&db, "United Kingdom", "London", f).unwrap();
+    ///   access.put(&db, "United Kingdom", "London", f.clone()).unwrap();
     ///   assert_eq!("Berlin", access.get::<str,str>(&db, "Germany").unwrap());
     /// }
     ///
@@ -927,7 +941,7 @@ impl<'env> WriteTransaction<'env> {
     ///   let subtx = txn.child_tx().unwrap();
     ///   {
     ///     let mut access = subtx.access();
-    ///     access.put(&db, "Spain", "Madrid", f).unwrap();
+    ///     access.put(&db, "Spain", "Madrid", f.clone()).unwrap();
     ///   }
     ///   // Commit this one this time.
     ///   subtx.commit().unwrap();
@@ -944,17 +958,20 @@ impl<'env> WriteTransaction<'env> {
     /// # }
     /// ```
     pub fn child_tx<'a>(&'a mut self) -> Result<WriteTransaction<'a>>
-    where 'env: 'a {
+    where
+        'env: 'a,
+    {
         let env = Supercow::share(&mut self.0.env);
-        Ok(WriteTransaction(try!(ConstTransaction::new(
-            env, Some(&mut*self), 0))))
+        Ok(WriteTransaction(ConstTransaction::new(
+            env,
+            Some(&mut *self),
+            0,
+        )?))
     }
 
     /// Commits this write transaction.
     pub fn commit(mut self) -> Result<()> {
-        unsafe {
-            self.0.tx.commit()
-        }
+        unsafe { self.0.tx.commit() }
     }
 
     /// Returns a read/write accessor on this transaction.
@@ -991,16 +1008,22 @@ impl<'txn> ConstAccessor<'txn> {
     /// possibility of the key being found, but the value not being convertible
     /// to a `&V`.
     #[inline]
-    pub fn get<K : AsLmdbBytes + ?Sized, V : FromLmdbBytes + ?Sized>(
-        &self, db: &Database, key: &K) -> Result<&V>
-    {
-        try!(db.assert_same_env(self.env()));
+    pub fn get<K: AsLmdbBytes + ?Sized, V: FromLmdbBytes + ?Sized>(
+        &self,
+        db: &Database,
+        key: &K,
+    ) -> Result<&V> {
+        db.assert_same_env(self.env())?;
 
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
         unsafe {
             lmdb_call!(ffi::mdb_get(
-                self.txptr(), db.as_raw(), &mut mv_key, &mut out_val));
+                self.txptr(),
+                db.as_raw(),
+                &mut mv_key,
+                &mut out_val
+            ));
         }
 
         from_val(self, &out_val)
@@ -1031,18 +1054,25 @@ impl<'txn> WriteAccessor<'txn> {
     /// existing key if duplicates are disallowed, or adding a duplicate data
     /// item if duplicates are allowed (`DUPSORT`).
     #[inline]
-    pub fn put<K : AsLmdbBytes + ?Sized, V : AsLmdbBytes + ?Sized>(
-        &mut self, db: &Database, key: &K, value: &V,
-        flags: put::Flags) -> Result<()>
-    {
-        try!(db.assert_same_env(self.env()));
+    pub fn put<K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + ?Sized>(
+        &mut self,
+        db: &Database,
+        key: &K,
+        value: &V,
+        flags: put::Flags,
+    ) -> Result<()> {
+        db.assert_same_env(self.env())?;
 
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(value);
         unsafe {
             lmdb_call!(ffi::mdb_put(
-                self.txptr(), db.as_raw(), &mut mv_key, &mut mv_val,
-                flags.bits()));
+                self.txptr(),
+                db.as_raw(),
+                &mut mv_key,
+                &mut mv_val,
+                flags.bits()
+            ));
         }
         Ok(())
     }
@@ -1095,13 +1125,13 @@ impl<'txn> WriteAccessor<'txn> {
     /// # }
     /// ```
     #[inline]
-    pub fn put_reserve<K : AsLmdbBytes + ?Sized,
-                       V : FromReservedLmdbBytes + Sized>(
-        &mut self, db: &Database, key: &K, flags: put::Flags) -> Result<&mut V>
-    {
-        unsafe {
-            self.put_reserve_unsized(db, key, mem::size_of::<V>(), flags)
-        }
+    pub fn put_reserve<K: AsLmdbBytes + ?Sized, V: FromReservedLmdbBytes + Sized>(
+        &mut self,
+        db: &Database,
+        key: &K,
+        flags: put::Flags,
+    ) -> Result<&mut V> {
+        unsafe { self.put_reserve_unsized(db, key, mem::size_of::<V>(), flags) }
     }
 
     /// Store items into a database.
@@ -1143,14 +1173,14 @@ impl<'txn> WriteAccessor<'txn> {
     /// # }
     /// ```
     #[inline]
-    pub fn put_reserve_array<K : AsLmdbBytes + ?Sized, V : LmdbRaw>(
-        &mut self, db: &Database, key: &K, count: usize, flags: put::Flags)
-        -> Result<&mut [V]>
-    {
-        unsafe {
-            self.put_reserve_unsized(
-                db, key, mem::size_of::<V>() * count, flags)
-        }
+    pub fn put_reserve_array<K: AsLmdbBytes + ?Sized, V: LmdbRaw>(
+        &mut self,
+        db: &Database,
+        key: &K,
+        count: usize,
+        flags: put::Flags,
+    ) -> Result<&mut [V]> {
+        unsafe { self.put_reserve_unsized(db, key, mem::size_of::<V>() * count, flags) }
     }
 
     /// Store items into a database.
@@ -1170,19 +1200,28 @@ impl<'txn> WriteAccessor<'txn> {
     ///
     /// The caller must ensure that `size` is a valid size for `V`.
     #[inline]
-    pub unsafe fn put_reserve_unsized<K : AsLmdbBytes + ?Sized,
-                                      V : FromReservedLmdbBytes + ?Sized>(
-        &mut self, db: &Database, key: &K, size: usize, flags: put::Flags)
-        -> Result<&mut V>
-    {
-        try!(db.assert_same_env(self.env()));
+    pub unsafe fn put_reserve_unsized<
+        K: AsLmdbBytes + ?Sized,
+        V: FromReservedLmdbBytes + ?Sized,
+    >(
+        &mut self,
+        db: &Database,
+        key: &K,
+        size: usize,
+        flags: put::Flags,
+    ) -> Result<&mut V> {
+        db.assert_same_env(self.env())?;
 
         let mut mv_key = as_val(key);
         let mut out_val = EMPTY_VAL;
         out_val.mv_size = size;
         lmdb_call!(ffi::mdb_put(
-            self.txptr(), db.as_raw(), &mut mv_key, &mut out_val,
-            flags.bits() | ffi::MDB_RESERVE));
+            self.txptr(),
+            db.as_raw(),
+            &mut mv_key,
+            &mut out_val,
+            flags.bits() | ffi::MDB_RESERVE
+        ));
 
         Ok(from_reserved(self, &out_val))
     }
@@ -1217,15 +1256,17 @@ impl<'txn> WriteAccessor<'txn> {
     /// # }
     /// ```
     #[inline]
-    pub fn del_key<K : AsLmdbBytes + ?Sized>(
-        &mut self, db: &Database, key: &K) -> Result<()>
-    {
-        try!(db.assert_same_env(self.env()));
+    pub fn del_key<K: AsLmdbBytes + ?Sized>(&mut self, db: &Database, key: &K) -> Result<()> {
+        db.assert_same_env(self.env())?;
 
         let mut mv_key = as_val(key);
         unsafe {
             lmdb_call!(ffi::mdb_del(
-                self.txptr(), db.as_raw(), &mut mv_key, ptr::null_mut()));
+                self.txptr(),
+                db.as_raw(),
+                &mut mv_key,
+                ptr::null_mut()
+            ));
         }
 
         Ok(())
@@ -1263,16 +1304,23 @@ impl<'txn> WriteAccessor<'txn> {
     /// # }
     /// ```
     #[inline]
-    pub fn del_item<K : AsLmdbBytes + ?Sized, V : AsLmdbBytes + ?Sized>(
-        &mut self, db: &Database, key: &K, val: &V) -> Result<()>
-    {
-        try!(db.assert_same_env(self.env()));
+    pub fn del_item<K: AsLmdbBytes + ?Sized, V: AsLmdbBytes + ?Sized>(
+        &mut self,
+        db: &Database,
+        key: &K,
+        val: &V,
+    ) -> Result<()> {
+        db.assert_same_env(self.env())?;
 
         let mut mv_key = as_val(key);
         let mut mv_val = as_val(val);
         unsafe {
             lmdb_call!(ffi::mdb_del(
-                self.txptr(), db.as_raw(), &mut mv_key, &mut mv_val));
+                self.txptr(),
+                db.as_raw(),
+                &mut mv_key,
+                &mut mv_val
+            ));
         }
 
         Ok(())
@@ -1293,9 +1341,9 @@ impl<'txn> WriteAccessor<'txn> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Germany", "Berlin", f).unwrap();
-    ///   access.put(&db, "France", "Paris", f).unwrap();
-    ///   access.put(&db, "Latvia", "Rīga", f).unwrap();
+    ///   access.put(&db, "Germany", "Berlin", f.clone()).unwrap();
+    ///   access.put(&db, "France", "Paris", f.clone()).unwrap();
+    ///   access.put(&db, "Latvia", "Rīga", f.clone()).unwrap();
     ///   assert_eq!(3, txn.db_stat(&db).unwrap().entries);
     ///
     ///   access.clear_db(&db).unwrap();
@@ -1305,7 +1353,7 @@ impl<'txn> WriteAccessor<'txn> {
     /// # }
     /// ```
     pub fn clear_db(&mut self, db: &Database) -> Result<()> {
-        try!(db.assert_same_env(self.env()));
+        db.assert_same_env(self.env())?;
         unsafe {
             lmdb_call!(ffi::mdb_drop(self.txptr(), db.as_raw(), 0));
         }

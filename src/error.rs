@@ -8,14 +8,13 @@
 
 //! Error values and types returned by LMDB and this wrapper.
 
+use libc::c_int;
 use std::error::Error as StdError;
 use std::ffi::{CStr, NulError};
 use std::fmt;
 use std::result;
-use libc::c_int;
 
-use ffi;
-use ffi2;
+use crate::ffi;
 
 /// key/data pair already exists
 pub const KEYEXIST: c_int = ffi::MDB_KEYEXIST;
@@ -61,10 +60,10 @@ pub const BAD_TXN: c_int = ffi::MDB_BAD_TXN;
 /// Unsupported size of key/DB name/data, or wrong `DUPFIXED` size
 pub const BAD_VALSIZE: c_int = ffi::MDB_BAD_VALSIZE;
 /// The specified DBI was changed unexpectedly
-pub const BAD_DBI: c_int = ffi2::MDB_BAD_DBI;
+pub const BAD_DBI: c_int = ffi::MDB_BAD_DBI;
 
 /// Error type returned by LMDB.
-#[derive(Clone,PartialEq,Eq,Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Error {
     /// A basic error code returned by LMDB.
     ///
@@ -85,7 +84,7 @@ pub enum Error {
     ValRejected(String),
     // Prevent external code from exhaustively matching on this enum.
     #[doc(hidden)]
-    _NonExhaustive
+    _NonExhaustive,
 }
 
 /// Result type returned for all calls that can fail.
@@ -96,10 +95,8 @@ impl Error {
         match *self {
             Error::NulStr => "NUL byte in path",
             Error::Reopened => "Attempt to reopen database",
-            Error::Mismatch =>
-                "Items from different env/database used together",
-            Error::ValRejected(..) =>
-                "Value conversion failed",
+            Error::Mismatch => "Items from different env/database used together",
+            Error::ValRejected(..) => "Value conversion failed",
             Error::_NonExhaustive => "Error::_NonExhaustive",
             Error::Code(code) => unsafe {
                 let raw = ffi::mdb_strerror(code);
@@ -116,18 +113,12 @@ impl Error {
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> result::Result<(), fmt::Error> {
         match *self {
-            Error::NulStr =>
-                write!(f, "Error::NulStr"),
-            Error::Reopened =>
-                write!(f, "Error::Reopened"),
-            Error::Mismatch =>
-                write!(f, "Error::Mismatch"),
-            Error::ValRejected(ref why) =>
-                write!(f, "Error::ValRejected({:?})", why),
-            Error::Code(code) =>
-                write!(f, "Error::Code({}, '{}')", code, self.strerror()),
-            Error::_NonExhaustive =>
-                write!(f, "Error::_NonExhaustive"),
+            Error::NulStr => write!(f, "Error::NulStr"),
+            Error::Reopened => write!(f, "Error::Reopened"),
+            Error::Mismatch => write!(f, "Error::Mismatch"),
+            Error::ValRejected(ref why) => write!(f, "Error::ValRejected({:?})", why),
+            Error::Code(code) => write!(f, "Error::Code({}, '{}')", code, self.strerror()),
+            Error::_NonExhaustive => write!(f, "Error::_NonExhaustive"),
         }
     }
 }
@@ -135,8 +126,7 @@ impl fmt::Debug for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> result::Result<(), fmt::Error> {
         match *self {
-            Error::ValRejected(ref why) =>
-                write!(f, "Value conversion failed: {}", why),
+            Error::ValRejected(ref why) => write!(f, "Value conversion failed: {}", why),
             _ => write!(f, "{}", self.strerror()),
         }
     }

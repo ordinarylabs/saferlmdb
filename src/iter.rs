@@ -9,10 +9,10 @@
 use std::iter::Iterator;
 use std::ops::{Deref, DerefMut};
 
-use cursor::Cursor;
-use error::Result;
-use tx::ConstAccessor;
-use traits::*;
+use crate::cursor::Cursor;
+use crate::error::Result;
+use crate::traits::*;
+use crate::tx::ConstAccessor;
 
 /// A mutable value which is either owned or borrowed from an owning context.
 ///
@@ -20,12 +20,12 @@ use traits::*;
 /// reference but cannot take ownership.
 #[derive(Debug)]
 #[allow(missing_docs)]
-pub enum MaybeOwned<'a, T : 'a> {
+pub enum MaybeOwned<'a, T: 'a> {
     Owned(T),
     Borrowed(&'a mut T),
 }
 
-impl<'a, T : 'a> Deref for MaybeOwned<'a, T> {
+impl<'a, T: 'a> Deref for MaybeOwned<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -36,7 +36,7 @@ impl<'a, T : 'a> Deref for MaybeOwned<'a, T> {
     }
 }
 
-impl<'a, T : 'a> DerefMut for MaybeOwned<'a, T> {
+impl<'a, T: 'a> DerefMut for MaybeOwned<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         match *self {
             MaybeOwned::Owned(ref mut t) => t,
@@ -53,15 +53,13 @@ impl<'a, T : 'a> DerefMut for MaybeOwned<'a, T> {
 /// Special handling is afforded the first item in the iterator, since the
 /// simple act of positioning the cursor produces the first item.
 pub struct CursorIter<'a, 'access: 'a, 'txn: 'access, 'db: 'txn, T> {
-    cursor: MaybeOwned<'a, Cursor<'txn,'db>>,
+    cursor: MaybeOwned<'a, Cursor<'txn, 'db>>,
     access: &'access ConstAccessor<'txn>,
     head: Option<T>,
-    next: fn (&mut Cursor<'txn,'db>, &'access ConstAccessor<'txn>)
-              -> Result<T>,
+    next: fn(&mut Cursor<'txn, 'db>, &'access ConstAccessor<'txn>) -> Result<T>,
 }
 
-impl<'a, 'access: 'a, 'txn: 'access, 'db: 'txn, T>
-CursorIter<'a, 'access, 'txn, 'db, T> {
+impl<'a, 'access: 'a, 'txn: 'access, 'db: 'txn, T> CursorIter<'a, 'access, 'txn, 'db, T> {
     /// Creates a cursor iterator from the given cursor and accessor.
     ///
     /// `head` is invoked immediately on `cursor` and `accessor` to position
@@ -84,10 +82,10 @@ CursorIter<'a, 'access, 'txn, 'db, T> {
     /// {
     ///   let mut access = txn.access();
     ///   let f = lmdb::put::Flags::empty();
-    ///   access.put(&db, "Fruit", "Apple", f).unwrap();
-    ///   access.put(&db, "Fruit", "Orange", f).unwrap();
-    ///   access.put(&db, "Animal", "Badger", f).unwrap();
-    ///   access.put(&db, "Veggie", "Carrot", f).unwrap();
+    ///   access.put(&db, "Fruit", "Apple", f.clone()).unwrap();
+    ///   access.put(&db, "Fruit", "Orange", f.clone()).unwrap();
+    ///   access.put(&db, "Animal", "Badger", f.clone()).unwrap();
+    ///   access.put(&db, "Veggie", "Carrot", f.clone()).unwrap();
     ///
     ///   let mut cursor = txn.cursor(&db).unwrap();
     ///   let mut iter = lmdb::CursorIter::new(
@@ -102,17 +100,13 @@ CursorIter<'a, 'access, 'txn, 'db, T> {
     /// txn.commit().unwrap();
     /// # }
     /// ```
-    pub fn new<H : FnOnce(&mut Cursor<'txn,'db>,
-                          &'access ConstAccessor<'txn>)
-                          -> Result<T>>
-        (mut cursor: MaybeOwned<'a, Cursor<'txn,'db>>,
-         access: &'access ConstAccessor<'txn>,
-         head: H,
-         next: fn (&mut Cursor<'txn,'db>, &'access ConstAccessor<'txn>)
-                   -> Result<T>)
-         -> Result<Self>
-    {
-        let head_val = try!(head(&mut*cursor, access).to_opt());
+    pub fn new<H: FnOnce(&mut Cursor<'txn, 'db>, &'access ConstAccessor<'txn>) -> Result<T>>(
+        mut cursor: MaybeOwned<'a, Cursor<'txn, 'db>>,
+        access: &'access ConstAccessor<'txn>,
+        head: H,
+        next: fn(&mut Cursor<'txn, 'db>, &'access ConstAccessor<'txn>) -> Result<T>,
+    ) -> Result<Self> {
+        let head_val = head(&mut *cursor, access).to_opt()?;
         Ok(CursorIter {
             cursor: cursor,
             access: access,
@@ -123,14 +117,15 @@ CursorIter<'a, 'access, 'txn, 'db, T> {
 }
 
 impl<'a, 'access: 'a, 'txn: 'access, 'db: 'txn, T> Iterator
-for CursorIter<'a, 'access, 'txn, 'db, T> {
+    for CursorIter<'a, 'access, 'txn, 'db, T>
+{
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Result<T>> {
         if let Some(head) = self.head.take() {
             Some(Ok(head))
         } else {
-            match (self.next)(&mut*self.cursor, self.access).to_opt() {
+            match (self.next)(&mut *self.cursor, self.access).to_opt() {
                 Ok(Some(v)) => Some(Ok(v)),
                 Ok(None) => None,
                 Err(err) => Some(Err(err.into())),
