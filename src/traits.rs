@@ -606,6 +606,7 @@ raw_array!(29);
 raw_array!(30);
 raw_array!(31);
 raw_array!(32);
+raw_array!(33);
 
 unsafe impl<V: LmdbRawIfUnaligned> LmdbRawIfUnaligned for Wrapping<V> {
     fn reported_type() -> String {
