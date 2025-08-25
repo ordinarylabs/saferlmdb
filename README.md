@@ -1,5 +1,7 @@
 # saferlmdb
 
+**MOVED TO https://codeberg.org/ordinarylabs/saferlmdb**
+
 [![Build Status](https://travis-ci.org/AltSysrq/saferlmdb.svg?branch=master)](https://travis-ci.org/AltSysrq/saferlmdb)
 [![](http://meritbadge.herokuapp.com/saferlmdb)](https://crates.io/crates/saferlmdb)
 
